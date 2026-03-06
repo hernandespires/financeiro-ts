@@ -75,8 +75,8 @@ export default function KpiCard({
             onClick={onClick}
             className={[
                 "w-full text-left flex flex-col gap-4 rounded-2xl p-6 transition-all duration-200",
-                "bg-black/40 backdrop-blur-md border",
-                "hover:scale-[1.02] hover:bg-black/60 cursor-pointer",
+                "bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl",
+                "hover:scale-[1.02] hover:bg-white/[0.04] cursor-pointer",
                 isActive
                     ? `${theme.borderActive} ${theme.glowClass}`
                     : "border-white/10 hover:border-white/20",

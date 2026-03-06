@@ -33,7 +33,7 @@ export default function ClientSearchInput() {
                 defaultValue={currentQ}
                 onChange={handleChange}
                 placeholder="Buscar por nome ou empresa..."
-                className="w-full rounded-xl bg-black/40 backdrop-blur-md border border-white/10 pl-9 pr-4 py-2.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-orange-500 transition-colors"
+                className="w-full rounded-xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl pl-9 pr-4 py-2.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-orange-500 transition-colors"
             />
         </div>
     );

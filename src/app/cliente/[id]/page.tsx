@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ChevronLeft, Building2, CalendarClock, TrendingDown } from "lucide-react";
+import { ChevronLeft, Building2, CalendarClock, TrendingDown, Activity, MessageSquare } from "lucide-react";
 import { supabaseAdmin } from "@/lib/supabase";
 import ParcelaActions from "@/components/ParcelaActions";
+import CommentForm from "@/components/CommentForm";
 import RiskBadge, { riskConfig, RiskStatus } from "@/components/RiskBadge";
 import { brl, toDateStr, daysLate, fmtDate } from "@/lib/utils";
 
@@ -54,29 +55,49 @@ function ParcelBadge({
 // ─── Page ────────────────────────────────────────────────────────────────────
 export default async function ClienteDetailPage({
     params,
+    searchParams,
 }: {
     params: Promise<{ id: string }>;
+    searchParams: Promise<{ tab?: string }>;
 }) {
     const { id } = await params;
+    const { tab } = await searchParams;
+    const activeTab = tab || "financeiro";
     const todayStr = toDateStr(new Date());
 
-    // ── Fetch ─────────────────────────────────────────────────────────────────
-    const { data: clientData, error } = await supabaseAdmin
-        .from("clientes")
-        .select(
-            `id, nome_cliente, empresa_label, cnpj_contrato, telefone, segmento, created_at,
-             contratos(
-               id, tipo_contrato, valor_total_contrato, parcelas_total, periodicidade,
-               parcelas(id, data_vencimento, valor_previsto, status_manual_override, observacao, tipo_parcela, numero_referencia, sub_indice)
-             )`
-        )
-        .eq("id", id)
-        .single();
+    // ── Parallel Fetch ────────────────────────────────────────────────────────
+    const [clientRes, comentariosRes, logsRes] = await Promise.all([
+        supabaseAdmin
+            .from("clientes")
+            .select(
+                `id, nome_cliente, empresa_label, cnpj_contrato, telefone, segmento, created_at,
+                 contratos(
+                   id, tipo_contrato, valor_total_contrato, parcelas_total, periodicidade, forma_pagamento,
+                   parcelas(id, data_vencimento, valor_previsto, status_manual_override, observacao, tipo_parcela, numero_referencia, sub_indice)
+                 )`
+            )
+            .eq("id", id)
+            .single(),
+        supabaseAdmin
+            .from('comentarios_clientes')
+            .select('*')
+            .eq('cliente_id', id)
+            .order('created_at', { ascending: false }),
+        supabaseAdmin
+            .from('atividades_log')
+            .select('*')
+            .eq('registro_id', id)
+            .order('created_at', { ascending: false }),
+    ]);
 
-    if (error || !clientData) {
-        console.error("[ClienteDetail] error:", error?.message);
+    if (clientRes.error || !clientRes.data) {
+        console.error("[ClienteDetail] error:", clientRes.error?.message);
         notFound();
     }
+
+    const clientData = clientRes.data;
+    const comentarios = comentariosRes.data || [];
+    const logs = logsRes.data || [];
 
     // ── Type narrowing ────────────────────────────────────────────────────────
     const cliente = clientData as {
@@ -141,6 +162,7 @@ export default async function ClienteDetailPage({
         sub_indice: number | null;
         contratoId: string;
         tipoContrato: string | null;
+        forma_pagamento_contrato: string | null;
         index: number;
         total: number;
     };
@@ -153,6 +175,7 @@ export default async function ClienteDetailPage({
                 ...p,
                 contratoId: ct.id,
                 tipoContrato: ct.tipo_contrato,
+                forma_pagamento_contrato: (ct as any).forma_pagamento ?? null,
                 index: i + 1,
                 total: ct.parcelas_total ?? ct.parcelas.length,
             }))
@@ -189,7 +212,7 @@ export default async function ClienteDetailPage({
 
             {/* Profile Hero Card */}
             <div
-                className={`rounded-2xl bg-black/60 backdrop-blur-md border border-white/10 p-8 ${riskConfig[riskStatus].glow} transition-shadow duration-300`}
+                className={`rounded-2xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl p-8 ${riskConfig[riskStatus].glow} transition-shadow duration-300`}
             >
                 <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-6">
 
@@ -267,7 +290,7 @@ export default async function ClienteDetailPage({
                     {contratos.map((ct) => (
                         <div
                             key={ct.id}
-                            className="flex items-center gap-3 rounded-xl bg-black/40 backdrop-blur-md border border-white/10 px-4 py-2.5"
+                            className="flex items-center gap-3 rounded-xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl px-4 py-2.5"
                         >
                             <CalendarClock size={13} className="text-orange-400 shrink-0" />
                             <div className="text-xs leading-tight">
@@ -283,128 +306,224 @@ export default async function ClienteDetailPage({
                 </div>
             )}
 
-            {/* Invoices Table */}
-            <div className="rounded-2xl bg-black/40 backdrop-blur-md border border-white/10 overflow-hidden">
+            {/* Tabs + Invoices / CRM Panel */}
+            <div className="rounded-2xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl overflow-hidden">
 
-                <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
-                    <h2 className="text-sm font-bold text-white">
-                        Histórico de Faturas
-                    </h2>
-                    <p className="text-xs text-gray-500">
-                        {allParcelas.length} parcela{allParcelas.length !== 1 ? "s" : ""}
-                    </p>
+                {/* Tab header */}
+                <div className="flex items-center gap-1 px-6 pt-4 border-b border-white/10">
+                    <Link
+                        href={`?tab=financeiro`}
+                        scroll={false}
+                        className={`text-sm font-bold px-4 py-3 -mb-px transition-colors border-b-2 ${activeTab === 'financeiro'
+                            ? 'text-orange-500 border-orange-500'
+                            : 'text-gray-500 border-transparent hover:text-gray-300'
+                            }`}
+                    >
+                        Histórico Financeiro
+                    </Link>
+                    <Link
+                        href={`?tab=crm`}
+                        scroll={false}
+                        className={`text-sm font-bold px-4 py-3 -mb-px transition-colors border-b-2 ${activeTab === 'crm'
+                            ? 'text-orange-500 border-orange-500'
+                            : 'text-gray-500 border-transparent hover:text-gray-300'
+                            }`}
+                    >
+                        CRM & Histórico
+                    </Link>
+                    {/* right: parcel count (only in financeiro) */}
+                    {activeTab === 'financeiro' && (
+                        <p className="ml-auto text-xs text-gray-500">
+                            {allParcelas.length} parcela{allParcelas.length !== 1 ? 's' : ''}
+                        </p>
+                    )}
                 </div>
 
-                <div className="overflow-x-auto">
-                    <table className="w-full">
-                        <thead>
-                            <tr className="border-b border-white/5">
-                                <th className="text-left px-6 py-3 text-[10px] font-semibold text-orange-500 uppercase tracking-widest">
-                                    #
-                                </th>
-                                <th className="text-left px-6 py-3 text-[10px] font-semibold text-orange-500 uppercase tracking-widest">
-                                    Tipo / Obs.
-                                </th>
-                                <th className="text-center px-6 py-3 text-[10px] font-semibold text-orange-500 uppercase tracking-widest">
-                                    Vencimento
-                                </th>
-                                <th className="text-right px-6 py-3 text-[10px] font-semibold text-orange-500 uppercase tracking-widest">
-                                    Valor
-                                </th>
-                                <th className="text-center px-6 py-3 text-[10px] font-semibold text-orange-500 uppercase tracking-widest">
-                                    Status
-                                </th>
-                                <th className="text-center px-6 py-3 text-[10px] font-semibold text-orange-500 uppercase tracking-widest">
-                                    Ação
-                                </th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {allParcelas.length === 0 ? (
-                                <tr>
-                                    <td
-                                        colSpan={6}
-                                        className="text-center py-14 text-gray-600 text-sm"
-                                    >
-                                        <span className="text-3xl block mb-2">📭</span>
-                                        Nenhuma parcela encontrada para este cliente.
-                                    </td>
+                {activeTab === 'financeiro' && (
+                    <div className="overflow-x-auto">
+                        <table className="w-full">
+                            <thead>
+                                <tr className="border-b border-white/5">
+                                    <th className="text-left px-6 py-3 text-[10px] font-semibold text-orange-500 uppercase tracking-widest">
+                                        #
+                                    </th>
+                                    <th className="text-left px-6 py-3 text-[10px] font-semibold text-orange-500 uppercase tracking-widest">
+                                        Tipo / Obs.
+                                    </th>
+                                    <th className="text-center px-6 py-3 text-[10px] font-semibold text-orange-500 uppercase tracking-widest">
+                                        Vencimento
+                                    </th>
+                                    <th className="text-right px-6 py-3 text-[10px] font-semibold text-orange-500 uppercase tracking-widest">
+                                        Valor
+                                    </th>
+                                    <th className="text-center px-6 py-3 text-[10px] font-semibold text-orange-500 uppercase tracking-widest">
+                                        Status
+                                    </th>
+                                    <th className="text-center px-6 py-3 text-[10px] font-semibold text-orange-500 uppercase tracking-widest">
+                                        Ação
+                                    </th>
                                 </tr>
-                            ) : (
-                                allParcelas.map((p) => {
-                                    const isPago = p.status_manual_override === "PAGO";
-                                    const isActionable = p.status_manual_override === "NORMAL";
-
-                                    return (
-                                        <tr
-                                            key={p.id}
-                                            className={`border-b border-white/5 last:border-0 transition-colors ${isPago
-                                                ? "opacity-50 hover:opacity-70"
-                                                : "hover:bg-white/[0.03]"
-                                                }`}
+                            </thead>
+                            <tbody>
+                                {allParcelas.length === 0 ? (
+                                    <tr>
+                                        <td
+                                            colSpan={6}
+                                            className="text-center py-14 text-gray-600 text-sm"
                                         >
-                                            {/* # parcela */}
-                                            <td className="px-6 py-3.5">
-                                                <span className="text-xs font-mono text-gray-400">
-                                                    {p.numero_referencia}
-                                                    {p.sub_indice != null && p.sub_indice > 0 && (
-                                                        <span className="text-orange-400">-{p.sub_indice}</span>
-                                                    )}
-                                                </span>
-                                            </td>
+                                            <span className="text-3xl block mb-2">📭</span>
+                                            Nenhuma parcela encontrada para este cliente.
+                                        </td>
+                                    </tr>
+                                ) : (
+                                    allParcelas.map((p) => {
+                                        const isPago = p.status_manual_override === "PAGO";
+                                        const isActionable = p.status_manual_override === "NORMAL";
 
-                                            {/* Tipo / Obs */}
-                                            <td className="px-6 py-3.5">
-                                                <p className="text-xs font-medium text-orange-400">
-                                                    {p.tipo_parcela ?? p.tipoContrato ?? "—"}
-                                                </p>
-                                                {p.observacao && (
-                                                    <p className="text-[10px] text-gray-500 mt-0.5 truncate max-w-[180px]">
-                                                        {p.observacao}
+                                        return (
+                                            <tr
+                                                key={p.id}
+                                                className={`border-b border-white/5 last:border-0 transition-colors ${isPago
+                                                    ? "opacity-50 hover:opacity-70"
+                                                    : "hover:bg-white/[0.03]"
+                                                    }`}
+                                            >
+                                                {/* # parcela */}
+                                                <td className="px-6 py-3.5">
+                                                    <span className="text-xs font-mono text-gray-400">
+                                                        {p.numero_referencia}
+                                                        {p.sub_indice != null && p.sub_indice > 0 && (
+                                                            <span className="text-orange-400">-{p.sub_indice}</span>
+                                                        )}
+                                                    </span>
+                                                </td>
+
+                                                {/* Tipo / Obs */}
+                                                <td className="px-6 py-3.5">
+                                                    <p className="text-xs font-medium text-orange-400">
+                                                        {p.tipo_parcela ?? p.tipoContrato ?? "—"}
                                                     </p>
-                                                )}
-                                            </td>
+                                                    {p.observacao && (
+                                                        <p className="text-[10px] text-gray-500 mt-0.5 truncate max-w-[180px]">
+                                                            {p.observacao}
+                                                        </p>
+                                                    )}
+                                                </td>
 
-                                            {/* Vencimento */}
-                                            <td className="px-6 py-3.5 text-center">
-                                                <span
-                                                    className={`text-xs font-medium ${!isPago &&
-                                                        daysLate(p.data_vencimento, todayStr) > 0
-                                                        ? "text-red-400"
-                                                        : "text-gray-300"
-                                                        }`}
-                                                >
-                                                    {fmtDate(p.data_vencimento)}
+                                                {/* Vencimento */}
+                                                <td className="px-6 py-3.5 text-center">
+                                                    <span
+                                                        className={`text-xs font-medium ${!isPago &&
+                                                            daysLate(p.data_vencimento, todayStr) > 0
+                                                            ? "text-red-400"
+                                                            : "text-gray-300"
+                                                            }`}
+                                                    >
+                                                        {fmtDate(p.data_vencimento)}
+                                                    </span>
+                                                </td>
+
+                                                {/* Valor */}
+                                                <td className="px-6 py-3.5 text-right">
+                                                    <span className="text-sm font-semibold text-white">
+                                                        {brl(p.valor_previsto)}
+                                                    </span>
+                                                </td>
+
+                                                {/* Status badge */}
+                                                <td className="px-6 py-3.5 text-center">
+                                                    <ParcelBadge
+                                                        status={p.status_manual_override}
+                                                        dueDate={p.data_vencimento}
+                                                        todayStr={todayStr}
+                                                    />
+                                                </td>
+
+                                                {/* Action */}
+                                                <td className="px-6 py-3.5 text-center">
+                                                    <ParcelaActions parcela={{
+                                                        id: p.id,
+                                                        valor_previsto: p.valor_previsto,
+                                                        status_manual_override: p.status_manual_override,
+                                                        numero_referencia: p.numero_referencia,
+                                                        sub_indice: p.sub_indice,
+                                                        forma_pagamento_contrato: p.forma_pagamento_contrato ?? undefined,
+                                                        observacao: p.observacao,
+                                                    }} />
+                                                </td>
+                                            </tr>
+                                        );
+                                    })
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+
+                {/* ── CRM TAB ──────────────────────────────────────────────── */}
+                {activeTab === 'crm' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 p-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+
+                        {/* LEFT: SYSTEM LOGS */}
+                        <div className="flex flex-col gap-4">
+                            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                                <Activity size={16} className="text-orange-500" />
+                                Logs do Sistema
+                            </h3>
+                            <div className="flex flex-col gap-3 max-h-[500px] overflow-y-auto pr-2">
+                                {logs.length === 0 ? (
+                                    <p className="text-xs text-gray-500 bg-white/5 p-4 rounded-xl">
+                                        Nenhuma atividade registrada ainda.
+                                    </p>
+                                ) : (
+                                    logs.map((log: any) => (
+                                        <div key={log.id} className="flex gap-3 bg-white/[0.02] border border-white/5 p-3 rounded-xl hover:bg-white/5 transition-colors">
+                                            <div className="mt-1.5 w-2 h-2 rounded-full bg-orange-500/50 shrink-0" />
+                                            <div className="flex flex-col">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{log.usuario_email}</span>
+                                                    <span className="text-[10px] text-gray-500">• {new Date(log.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</span>
+                                                </div>
+                                                <span className="text-xs text-white mt-1">
+                                                    <strong className="text-orange-400">{log.acao}</strong> em
+                                                    <span className="px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-[10px] tracking-wider uppercase ml-1">{log.tabela_afetada}</span>
                                                 </span>
-                                            </td>
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
 
-                                            {/* Valor */}
-                                            <td className="px-6 py-3.5 text-right">
-                                                <span className="text-sm font-semibold text-white">
-                                                    {brl(p.valor_previsto)}
-                                                </span>
-                                            </td>
+                        {/* RIGHT: HUMAN COMMENTS */}
+                        <div className="flex flex-col gap-4">
+                            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                                <MessageSquare size={16} className="text-orange-500" />
+                                Comentários da Equipe
+                            </h3>
+                            <div className="flex flex-col gap-3 max-h-[400px] overflow-y-auto pr-2">
+                                {comentarios.length === 0 ? (
+                                    <p className="text-xs text-gray-500 bg-white/5 p-4 rounded-xl">
+                                        Nenhum comentário adicionado.
+                                    </p>
+                                ) : (
+                                    comentarios.map((c: any) => (
+                                        <div key={c.id} className="flex flex-col bg-white/[0.02] backdrop-blur-xl border border-white/10 p-4 rounded-xl rounded-tr-sm shadow-lg">
+                                            <div className="flex items-center justify-between mb-2">
+                                                <span className="text-[10px] font-bold text-orange-500 uppercase tracking-wider">{c.usuario_nome}</span>
+                                                <span className="text-[10px] text-gray-500">{new Date(c.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</span>
+                                            </div>
+                                            <p className="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">{c.comentario}</p>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                            <CommentForm clienteId={id} />
+                        </div>
 
-                                            {/* Status badge */}
-                                            <td className="px-6 py-3.5 text-center">
-                                                <ParcelBadge
-                                                    status={p.status_manual_override}
-                                                    dueDate={p.data_vencimento}
-                                                    todayStr={todayStr}
-                                                />
-                                            </td>
+                    </div>
+                )}
 
-                                            {/* Action */}
-                                            <td className="px-6 py-3.5 text-center">
-                                                <ParcelaActions parcela={p} />
-                                            </td>
-                                        </tr>
-                                    );
-                                })
-                            )}
-                        </tbody>
-                    </table>
-                </div>
             </div>
         </div>
     );

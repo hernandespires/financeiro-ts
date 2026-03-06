@@ -72,7 +72,7 @@ export default function HomePage() {
           </div>
 
           {/* A receber */}
-          <div className="flex flex-col justify-between rounded-2xl bg-black/40 backdrop-blur-md border border-white/10 p-5 min-h-[120px]">
+          <div className="flex flex-col justify-between rounded-2xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl p-5 min-h-[120px]">
             <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
               A receber
             </span>
@@ -88,7 +88,7 @@ export default function HomePage() {
           </div>
 
           {/* A pagar */}
-          <div className="flex flex-col justify-between rounded-2xl bg-black/40 backdrop-blur-md border border-white/10 p-5 min-h-[120px]">
+          <div className="flex flex-col justify-between rounded-2xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl p-5 min-h-[120px]">
             <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
               A pagar
             </span>
@@ -145,7 +145,7 @@ export default function HomePage() {
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_420px] gap-6">
 
         {/* LEFT — Bar chart */}
-        <div className="flex flex-col rounded-2xl bg-black/40 backdrop-blur-md border border-white/10 p-6">
+        <div className="flex flex-col rounded-2xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl p-6">
           <h2 className="text-base font-bold text-orange-500 mb-6">
             Métricas do Financeiro
           </h2>
@@ -174,7 +174,7 @@ export default function HomePage() {
         </div>
 
         {/* RIGHT — Transactions */}
-        <div className="flex flex-col rounded-2xl bg-black/40 backdrop-blur-md border border-white/10 p-6">
+        <div className="flex flex-col rounded-2xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl p-6">
           <h2 className="text-base font-bold text-orange-500 mb-5">
             Últimas transações
           </h2>
@@ -229,7 +229,7 @@ export default function HomePage() {
         {shortcuts.map(({ label, icon: Icon }) => (
           <button
             key={label}
-            className="flex items-center gap-4 rounded-2xl bg-black/40 backdrop-blur-md border border-white/10 hover:border-orange-500 p-5 transition-all duration-200 group text-left"
+            className="flex items-center gap-4 rounded-2xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl hover:border-orange-500 p-5 transition-all duration-200 group text-left"
           >
             <div className="w-10 h-10 rounded-xl bg-orange-500/15 flex items-center justify-center shrink-0 group-hover:bg-orange-500/25 transition-colors">
               <Icon size={20} className="text-orange-500" strokeWidth={1.8} />

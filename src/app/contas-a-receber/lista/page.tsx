@@ -213,7 +213,7 @@ export default async function ListaRecebimentosMes({
             </Link>
 
             {/* Hero Card */}
-            <div className="rounded-2xl bg-black/60 backdrop-blur-md border border-white/10 p-8 shadow-[0_0_40px_rgba(249,115,22,0.08)]">
+            <div className="rounded-2xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl p-8 shadow-[0_0_40px_rgba(249,115,22,0.08)]">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
 
                     {/* Left — title + month nav */}
@@ -271,7 +271,7 @@ export default async function ListaRecebimentosMes({
             </div>
 
             {/* Table Card */}
-            <div className="rounded-2xl bg-black/60 backdrop-blur-md border border-white/10 overflow-hidden">
+            <div className="rounded-2xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl overflow-hidden">
 
                 {/* Card header + filter tabs */}
                 <div className="flex flex-col gap-3 px-6 py-4 border-b border-white/10">
@@ -340,8 +340,8 @@ export default async function ListaRecebimentosMes({
                                         <tr
                                             key={p.id}
                                             className={`group border-b border-white/5 last:border-0 transition-colors ${isLate ? "hover:bg-red-500/5" :
-                                                    isProximo ? "hover:bg-orange-500/5" :
-                                                        "hover:bg-white/5"
+                                                isProximo ? "hover:bg-orange-500/5" :
+                                                    "hover:bg-white/5"
                                                 }`}
                                         >
                                             {/* Data */}

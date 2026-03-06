@@ -238,7 +238,7 @@ export default async function ConsultarClientesPage({
                 <div className="flex items-center gap-3 flex-1">
                     {/* Live search — Client Component */}
                     <ClientSearchInput />
-                    <button className="flex items-center gap-2 rounded-xl bg-black/40 backdrop-blur-md border border-white/10 px-4 py-2.5 text-xs text-gray-400 hover:border-orange-500 transition-colors">
+                    <button className="flex items-center gap-2 rounded-xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl px-4 py-2.5 text-xs text-gray-400 hover:border-orange-500 transition-colors">
                         <SlidersHorizontal size={13} />
                         Filtros
                     </button>
@@ -257,7 +257,7 @@ export default async function ConsultarClientesPage({
             </div>
 
             {/* Data Table */}
-            <div className="rounded-2xl bg-black/40 backdrop-blur-md border border-white/10 overflow-hidden">
+            <div className="rounded-2xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl overflow-hidden">
 
                 {/* Table header info */}
                 <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">

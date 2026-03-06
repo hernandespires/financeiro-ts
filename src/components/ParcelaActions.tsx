@@ -12,6 +12,8 @@ export interface ParcelaForActions {
     status_manual_override: string;
     numero_referencia?: number;
     sub_indice?: number | null;
+    forma_pagamento_contrato?: string;
+    observacao?: string | null;
 }
 
 interface ParcelaActionsProps {
@@ -47,7 +49,7 @@ function Modal({ onClose, children }: { onClose: () => void; children: React.Rea
 
 // ─── Shared Input styles ──────────────────────────────────────────────────────
 const inputCls =
-    "w-full rounded-xl bg-black/60 border border-white/10 px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-orange-500 transition-colors";
+    "w-full rounded-xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-orange-500 transition-colors";
 
 const labelCls = "text-[11px] font-semibold text-gray-400 uppercase tracking-widest";
 
@@ -63,7 +65,8 @@ function PaymentModal({
 }) {
     const [valorPago, setValorPago] = useState(parcela.valor_previsto.toFixed(2));
     const [dataPagamento, setDataPagamento] = useState(todayISO());
-    const [plataforma, setPlataforma] = useState("PIX");
+    const [plataforma, setPlataforma] = useState(parcela.forma_pagamento_contrato || "PIX");
+    const [observacao, setObservacao] = useState(parcela.observacao || "");
     const [isPending, startTransition] = useTransition();
     const [error, setError] = useState<string | null>(null);
 
@@ -75,7 +78,7 @@ function PaymentModal({
             return;
         }
         startTransition(async () => {
-            const res = await registrarPagamentoCompleto(parcela.id, val, dataPagamento, plataforma);
+            const res = await registrarPagamentoCompleto(parcela.id, val, dataPagamento, plataforma, observacao || undefined);
             if (res.ok) {
                 onSuccess();
                 onClose();
@@ -139,6 +142,16 @@ function PaymentModal({
                         <option value="APP DE TRANSFERÊNCIA">APP DE TRANSFERÊNCIA</option>
                         <option value="DINHEIRO">DINHEIRO</option>
                     </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                    <label className={labelCls}>Observações (Opcional)</label>
+                    <textarea
+                        value={observacao}
+                        onChange={(e) => setObservacao(e.target.value)}
+                        placeholder="Ex: Atrasou por problema no cartão..."
+                        className={inputCls + " resize-none h-20"}
+                    />
                 </div>
 
                 {error && (

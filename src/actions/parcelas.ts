@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase";
+import { registrarLog } from "@/lib/logger";
 
 // ─── Shared revalidation ──────────────────────────────────────────────────────
 function revalidateAll(clienteId?: string) {
@@ -25,12 +26,13 @@ export async function registrarPagamentoCompleto(
     parcelaId: string,
     valorPago: number,
     dataPagamento: string,    // "YYYY-MM-DD"
-    plataforma: string        // e.g. "PIX", "IUGU", "STRIPE BRASIL", "STRIPE EUA"
+    plataforma: string,       // e.g. "PIX", "IUGU", "STRIPE BRASIL", "STRIPE EUA"
+    observacao?: string
 ): Promise<ActionResult> {
     // Step 1: mark parcela as PAGO
     const { error: updateError } = await supabaseAdmin
         .from("parcelas")
-        .update({ status_manual_override: "PAGO" as any })
+        .update({ status_manual_override: "PAGO" as any, observacao: observacao || null })
         .eq("id", parcelaId);
 
     if (updateError) {
@@ -54,6 +56,25 @@ export async function registrarPagamentoCompleto(
         console.error("[registrarPagamentoCompleto] Erro ao inserir pagamento:", insertError.message);
         // Parcela already marked PAGO — surface the error but don't roll back
         return { ok: false, error: `Parcela marcada como PAGO, mas falha ao gravar histórico: ${insertError.message}` };
+    }
+
+    // Step 3: log the action against the client's CRM tab
+    const { data: pData } = await supabaseAdmin
+        .from('parcelas')
+        .select('numero_referencia, contratos(cliente_id)')
+        .eq('id', parcelaId)
+        .single();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const clienteId = (pData?.contratos as any)?.cliente_id;
+    const numero_referencia = pData?.numero_referencia ?? parcelaId;
+
+    if (clienteId) {
+        await registrarLog(
+            clienteId,
+            'PARCELAS',
+            `Deu baixa na parcela ${numero_referencia} — Valor: R$ ${valorPago.toFixed(2)} via ${plataforma}`
+        );
     }
 
     revalidateAll();

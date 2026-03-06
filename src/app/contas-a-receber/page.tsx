@@ -139,7 +139,7 @@ export default async function ContasAReceberPage({
                 {/* ════════════════════════════════════════
                     LEFT — List / Search (col-span-5)
                 ════════════════════════════════════════ */}
-                <div className="lg:col-span-5 flex flex-col rounded-2xl bg-black/60 backdrop-blur-md border border-white/10 p-5 gap-4">
+                <div className="lg:col-span-5 flex flex-col rounded-2xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl p-5 gap-4">
 
                     {/* Header — selected date */}
                     <div className="flex items-center justify-between gap-3">
@@ -218,7 +218,7 @@ export default async function ContasAReceberPage({
 
                     {/* Footer */}
                     <div className="flex items-center justify-between pt-2 border-t border-white/10">
-                        <Link 
+                        <Link
                             href={`/contas-a-receber/lista?month=${currentMonth}`}
                             className="text-xs text-gray-400 hover:text-orange-500 transition-colors underline-offset-4 hover:underline"
                         >
@@ -249,7 +249,7 @@ export default async function ContasAReceberPage({
                 <div className="lg:col-span-7 flex flex-col gap-4">
 
                     {/* ROW 1 — Big numbers */}
-                    <div className="rounded-2xl bg-black/60 backdrop-blur-md border border-white/10 p-6">
+                    <div className="rounded-2xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl p-6">
                         <div className="grid grid-cols-2 divide-x divide-white/10">
                             <div className="flex flex-col items-center justify-center pr-6">
                                 <span className="text-6xl font-black text-orange-500 leading-none">
@@ -268,7 +268,7 @@ export default async function ContasAReceberPage({
 
                     {/* ROW 2 — 4 Status cards (Cross-Default risk buckets) */}
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                        <div className="flex flex-col justify-between rounded-2xl bg-black/60 backdrop-blur-md border border-white/10 p-4 min-h-[90px]">
+                        <div className="flex flex-col justify-between rounded-2xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl p-4 min-h-[90px]">
                             <span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">A receber</span>
                             <div>
                                 <p className="text-base font-extrabold text-green-400 leading-tight">
@@ -280,7 +280,7 @@ export default async function ContasAReceberPage({
                             </div>
                         </div>
 
-                        <div className="flex flex-col justify-between rounded-2xl bg-black/60 backdrop-blur-md border border-white/10 p-4 min-h-[90px]">
+                        <div className="flex flex-col justify-between rounded-2xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl p-4 min-h-[90px]">
                             <span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Em atraso</span>
                             <div>
                                 <p className="text-base font-extrabold text-orange-400 leading-tight">
@@ -292,7 +292,7 @@ export default async function ContasAReceberPage({
                             </div>
                         </div>
 
-                        <div className="flex flex-col justify-between rounded-2xl bg-black/60 backdrop-blur-md border border-white/10 p-4 min-h-[90px]">
+                        <div className="flex flex-col justify-between rounded-2xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl p-4 min-h-[90px]">
                             <span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide leading-tight">Inadimplência</span>
                             <div>
                                 <p className="text-base font-extrabold text-red-400 leading-tight">
@@ -304,7 +304,7 @@ export default async function ContasAReceberPage({
                             </div>
                         </div>
 
-                        <div className="flex flex-col justify-between rounded-2xl bg-black/60 backdrop-blur-md border border-red-500/20 p-4 min-h-[90px]">
+                        <div className="flex flex-col justify-between rounded-2xl bg-white/[0.02] backdrop-blur-md border border-red-500/20 p-4 min-h-[90px]">
                             <span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide leading-tight">Perda Fat.</span>
                             <div>
                                 <p className="text-base font-extrabold text-red-600 leading-tight">
@@ -320,7 +320,7 @@ export default async function ContasAReceberPage({
                     {/* ROW 3 — Action buttons */}
                     <div className="grid grid-cols-3 gap-4">
                         <ActionCardButton href="/cadastro" icon={<Banknote />} label="Lançamento de Recebimento" />
-                        <ActionCardButton icon={<BookOpen />} label="Contas de recebimento" />
+                        <ActionCardButton href="/contas-a-receber/previsao" icon={<BookOpen />} label="Previsão" />
                         <ActionCardButton href="/consultar-clientes" icon={<UserSearch />} label="Consultar Clientes" />
                     </div>
                 </div>
@@ -328,7 +328,7 @@ export default async function ContasAReceberPage({
                 {/* ════════════════════════════════════════
                     BOTTOM — Chart (col-span-12)
                 ════════════════════════════════════════ */}
-                <div className="lg:col-span-12 flex flex-col rounded-2xl bg-black/60 backdrop-blur-md border border-white/10 p-6 gap-4">
+                <div className="lg:col-span-12 flex flex-col rounded-2xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl p-6 gap-4">
                     <h2 className="text-base font-bold text-orange-500">Histórico de contas à receber</h2>
 
                     <RecebimentosChart
@@ -339,7 +339,7 @@ export default async function ContasAReceberPage({
                     />
 
                     <div className="flex justify-center pt-1 border-t border-white/10">
-                        <Link 
+                        <Link
                             href={`/contas-a-receber/lista?month=${currentMonth}`}
                             className="text-xs text-gray-400 hover:text-orange-500 transition-colors underline-offset-4 hover:underline"
                         >
