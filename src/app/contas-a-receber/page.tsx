@@ -11,46 +11,57 @@ import {
     AlertTriangle,
 } from "lucide-react";
 import { supabaseAdmin } from "@/lib/supabase";
-import RecebimentosChart, { ChartDataPoint } from "@/components/RecebimentosChart";
+import RecebimentosChart, { MonthlyParcela } from "@/components/RecebimentosChart";
+import ActionCardButton from "@/components/ActionCardButton";
+import { brl, toDateStr, daysLate } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface RawParcela {
     id: string;
-    contrato_id: string;          // needed for cross-default grouping
+    contrato_id: string; // needed for cross-default grouping
     valor_previsto: number;
-    data_vencimento: string;      // "YYYY-MM-DD"
+    data_vencimento: string; // "YYYY-MM-DD"
     status_manual_override: string;
     observacao?: string | null;
     contratos?: {
         clientes?: {
+            id?: string | null;
             nome_cliente?: string | null;
         } | null;
     } | null;
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-const brl = (v: number) =>
-    new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
-
-/** Returns "YYYY-MM-DD" for the given Date — safely ignoring timezone shifts */
-const toDateStr = (d: Date): string =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-
-/** Days late: positive = past due, negative = in the future, 0 = today */
-const daysLate = (dueDateStr: string, todayStr: string): number => {
-    const due = new Date(dueDateStr + "T00:00:00");
-    const tod = new Date(todayStr + "T00:00:00");
-    return Math.round((tod.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
-};
-
 // ─── Page (async Server Component) ───────────────────────────────────────────
-export default async function ContasAReceberPage() {
+export default async function ContasAReceberPage({
+    searchParams,
+}: {
+    searchParams: Promise<{ date?: string; month?: string }>;
+}) {
+    const params = await searchParams;
     const todayStr = toDateStr(new Date());
+
+    // currentDate: use ?date param (YYYY-MM-DD) or fall back to today
+    const currentDate = params.date ?? todayStr;
+    // currentMonth: use ?month param (YYYY-MM) or derive from currentDate
+    const currentMonth = params.month ?? currentDate.slice(0, 7);
+
+    // ── Prev / Next day navigation ─────────────────────────────────────────────
+    const currDateObj = new Date(currentDate + "T12:00:00"); // T12 avoids timezone date shift
+
+    const prevDateObj = new Date(currDateObj);
+    prevDateObj.setDate(prevDateObj.getDate() - 1);
+    const prevDateStr = prevDateObj.toISOString().split("T")[0];
+    const prevMonthStr = prevDateStr.slice(0, 7);
+
+    const nextDateObj = new Date(currDateObj);
+    nextDateObj.setDate(nextDateObj.getDate() + 1);
+    const nextDateStr = nextDateObj.toISOString().split("T")[0];
+    const nextMonthStr = nextDateStr.slice(0, 7);
 
     // ── 1. Fetch parcelas with relational join ─────────────────────────────────
     const { data: parcelasData, error } = await supabaseAdmin
         .from("parcelas")
-        .select("*, contratos(clientes(nome_cliente))")
+        .select("*, contratos(clientes(id, nome_cliente))")
         .eq("status_manual_override", "NORMAL")
         .order("data_vencimento", { ascending: true });
 
@@ -61,16 +72,6 @@ export default async function ContasAReceberPage() {
     const parcelas: RawParcela[] = (parcelasData ?? []) as RawParcela[];
 
     // ── 2. CONTRACT-LEVEL RISK ASSESSMENT (Cross-Default logic) ────────────────
-    // Group all parcels by contrato_id, then classify the ENTIRE contract balance
-    // by the worst (maxDaysLate) parcel in that group.
-    //
-    // Buckets:
-    //   totalAReceber    → maxDaysLate ≤ 0  (all due today or in the future)
-    //   totalAtraso      → maxDaysLate 1–14 days
-    //   totalInadimplencia → maxDaysLate 15–30 days
-    //   totalPerda       → maxDaysLate > 30 (entire balance is a write-off risk)
-
-    // Step A: group parcels by contrato_id
     const contratoMap = new Map<string, RawParcela[]>();
     for (const p of parcelas) {
         const key = p.contrato_id ?? `solo-${p.id}`;
@@ -83,7 +84,6 @@ export default async function ContasAReceberPage() {
     let totalInadimplencia = 0;
     let totalPerda = 0;
 
-    // Step B: for each contract, find worst delay and sum its entire balance
     for (const [, group] of contratoMap) {
         const contractBalance = group.reduce((s, p) => s + (p.valor_previsto ?? 0), 0);
         const maxLate = Math.max(...group.map((p) => daysLate(p.data_vencimento, todayStr)));
@@ -94,48 +94,31 @@ export default async function ContasAReceberPage() {
         else totalAReceber += contractBalance;
     }
 
-    // ── 3. Today's agenda (LEFT column — strict today filter) ──────────────────
-    // Timezone-safe: compare "YYYY-MM-DD" strings directly to avoid UTC offset bugs.
-    const parcelasHoje = parcelas.filter((p) => p.data_vencimento === todayStr);
+    // ── 3. Selected-date agenda (LEFT column) ─────────────────────────────────
+    const parcelasHoje = parcelas.filter((p) => p.data_vencimento === currentDate);
     const totalHoje = parcelasHoje.reduce((sum, p) => sum + (p.valor_previsto ?? 0), 0);
 
-    const totalCount = parcelas.length;
+    const formattedSelectedDate = new Date(currentDate + "T00:00:00").toLocaleDateString("pt-BR", {
+        weekday: "short",
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+    });
+
+    const parcelasMes = parcelas.filter((p) => p.data_vencimento.startsWith(currentMonth));
+    const totalCount = parcelasMes.length;
     const clientCount = new Set(
-        parcelas
-            .map((p) => p.contratos?.clientes?.nome_cliente)
+        parcelasMes
+            .map((p) => p.contratos?.clientes?.id)
             .filter(Boolean)
     ).size;
 
-    // ── 4. Chart: 30-day window centered on today ─────────────────────────────
-    const windowStart = new Date(todayStr + "T00:00:00");
-    windowStart.setDate(windowStart.getDate() - 10);
+    // ── 4. Monthly chart data ─────────────────────────────────────────────────
+    const monthlyData: MonthlyParcela[] = parcelas
+        .filter((p) => p.data_vencimento.startsWith(currentMonth))
+        .map((p) => ({ data_vencimento: p.data_vencimento, valor_previsto: p.valor_previsto }));
 
-    const windowEnd = new Date(todayStr + "T00:00:00");
-    windowEnd.setDate(windowEnd.getDate() + 19);
-
-    // Build ordered bucket map
-    const bucketsMap = new Map<string, { displayLabel: string; value: number; isFuture: boolean }>();
-    const cursor = new Date(windowStart);
-    while (cursor <= windowEnd) {
-        const key = toDateStr(cursor);
-        const label = cursor.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
-        bucketsMap.set(key, { displayLabel: label, value: 0, isFuture: key > todayStr });
-        cursor.setDate(cursor.getDate() + 1);
-    }
-
-    // Aggregate parcelas into buckets
-    for (const p of parcelas) {
-        const bucket = bucketsMap.get(p.data_vencimento);
-        if (bucket) {
-            bucket.value += p.valor_previsto;
-        }
-    }
-
-    const chartData: ChartDataPoint[] = Array.from(bucketsMap.values()).map((b) => ({
-        date: b.displayLabel,
-        value: b.value,
-        isFuture: b.isFuture,
-    }));
+    const previsaoMes = monthlyData.reduce((s, p) => s + p.valor_previsto, 0);
 
     // ─────────────────────────────────────────────────────────────────────────
     return (
@@ -154,18 +137,18 @@ export default async function ContasAReceberPage() {
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
 
                 {/* ════════════════════════════════════════
-            LEFT — List / Search  (col-span-5)
-        ════════════════════════════════════════ */}
+                    LEFT — List / Search (col-span-5)
+                ════════════════════════════════════════ */}
                 <div className="lg:col-span-5 flex flex-col rounded-2xl bg-black/60 backdrop-blur-md border border-white/10 p-5 gap-4">
 
-                    {/* Header — TODAY only */}
+                    {/* Header — selected date */}
                     <div className="flex items-center justify-between gap-3">
                         <div>
                             <p className="text-sm font-bold text-white leading-tight">
                                 {parcelasHoje.length} Contas a receber
                             </p>
                             <p className="text-[11px] text-gray-500 mt-0.5">
-                                Agenda do dia — {new Date(todayStr + "T00:00:00").toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" })}
+                                Agenda — {formattedSelectedDate}
                             </p>
                         </div>
                         <span className="shrink-0 rounded-full bg-orange-500 px-3 py-1 text-xs font-bold text-black">
@@ -190,7 +173,6 @@ export default async function ContasAReceberPage() {
 
                     {/* Table */}
                     <div className="flex flex-col flex-1">
-                        {/* Header row */}
                         <div className="grid grid-cols-[1fr_1fr_auto_auto] gap-2 px-2 pb-2 border-b border-white/10">
                             <span className="text-[10px] font-semibold text-orange-500 uppercase flex items-center gap-1">
                                 Cliente <ChevronsUpDown size={10} />
@@ -206,50 +188,64 @@ export default async function ContasAReceberPage() {
                                 const nome = p.contratos?.clientes?.nome_cliente ?? "Cliente Desconhecido";
                                 const obs = p.observacao ?? "—";
                                 return (
-                                    <div
+                                    <Link
+                                        href={`/cliente/${p.contratos?.clientes?.id ?? ""}`}
                                         key={p.id}
                                         className="grid grid-cols-[1fr_1fr_auto_auto] gap-2 items-center px-2 py-3 border-b border-white/5 last:border-0 hover:bg-white/5 rounded-xl transition-colors cursor-pointer"
                                     >
                                         <div className="flex flex-col min-w-0">
                                             <span className="text-xs text-white font-medium truncate">{nome}</span>
-                                            <span className="text-[10px] text-orange-400/70">Vence hoje</span>
+                                            <span className="text-[10px] text-orange-400/70">
+                                                {currentDate === todayStr ? "Vence hoje" : `Vence ${currentDate.split("-").reverse().join("/")}`}
+                                            </span>
                                         </div>
                                         <span className="text-xs text-orange-400 truncate">{obs}</span>
                                         <span className="text-xs text-white font-semibold whitespace-nowrap">
                                             {brl(p.valor_previsto)}
                                         </span>
                                         <ChevronRight size={14} className="text-gray-500" />
-                                    </div>
+                                    </Link>
                                 );
                             })
                         ) : (
                             <div className="flex flex-col items-center justify-center py-10 text-gray-600 text-xs gap-2">
                                 <span className="text-2xl">📭</span>
-                                <span>Nenhum recebimento para hoje</span>
-                                <span className="text-[10px] text-gray-700">Os vencimentos do dia aparecerão aqui</span>
+                                <span>Nenhum recebimento para {currentDate === todayStr ? "hoje" : formattedSelectedDate}</span>
+                                <span className="text-[10px] text-gray-700">Clique em outro dia no gráfico</span>
                             </div>
                         )}
                     </div>
 
                     {/* Footer */}
                     <div className="flex items-center justify-between pt-2 border-t border-white/10">
-                        <button className="text-xs text-gray-400 hover:text-orange-500 transition-colors underline-offset-4 hover:underline">
+                        <Link 
+                            href={`/contas-a-receber/lista?month=${currentMonth}`}
+                            className="text-xs text-gray-400 hover:text-orange-500 transition-colors underline-offset-4 hover:underline"
+                        >
                             Visualizar todos recebimentos
-                        </button>
+                        </Link>
                         <div className="flex gap-2">
-                            <button className="text-xs text-gray-500 hover:text-white transition-colors px-3 py-1 rounded-lg border border-white/10 hover:border-white/30">
-                                Anterior
-                            </button>
-                            <button className="text-xs text-gray-500 hover:text-white transition-colors px-3 py-1 rounded-lg border border-white/10 hover:border-white/30">
-                                Próximo
-                            </button>
+                            <Link
+                                href={`?date=${prevDateStr}&month=${prevMonthStr}`}
+                                className="text-xs text-gray-500 hover:text-white transition-colors px-3 py-1 rounded-lg border border-white/10 hover:border-orange-500/50 hover:text-orange-400"
+                                scroll={false}
+                            >
+                                ← Anterior
+                            </Link>
+                            <Link
+                                href={`?date=${nextDateStr}&month=${nextMonthStr}`}
+                                className="text-xs text-gray-500 hover:text-white transition-colors px-3 py-1 rounded-lg border border-white/10 hover:border-orange-500/50 hover:text-orange-400"
+                                scroll={false}
+                            >
+                                Próximo →
+                            </Link>
                         </div>
                     </div>
                 </div>
 
                 {/* ════════════════════════════════════════
-            RIGHT — Metrics & Actions (col-span-7)
-        ════════════════════════════════════════ */}
+                    RIGHT — Metrics & Actions (col-span-7)
+                ════════════════════════════════════════ */}
                 <div className="lg:col-span-7 flex flex-col gap-4">
 
                     {/* ROW 1 — Big numbers */}
@@ -272,8 +268,6 @@ export default async function ContasAReceberPage() {
 
                     {/* ROW 2 — 4 Status cards (Cross-Default risk buckets) */}
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-
-                        {/* A receber */}
                         <div className="flex flex-col justify-between rounded-2xl bg-black/60 backdrop-blur-md border border-white/10 p-4 min-h-[90px]">
                             <span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">A receber</span>
                             <div>
@@ -286,7 +280,6 @@ export default async function ContasAReceberPage() {
                             </div>
                         </div>
 
-                        {/* Em atraso */}
                         <div className="flex flex-col justify-between rounded-2xl bg-black/60 backdrop-blur-md border border-white/10 p-4 min-h-[90px]">
                             <span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Em atraso</span>
                             <div>
@@ -299,7 +292,6 @@ export default async function ContasAReceberPage() {
                             </div>
                         </div>
 
-                        {/* Inadimplência */}
                         <div className="flex flex-col justify-between rounded-2xl bg-black/60 backdrop-blur-md border border-white/10 p-4 min-h-[90px]">
                             <span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide leading-tight">Inadimplência</span>
                             <div>
@@ -312,7 +304,6 @@ export default async function ContasAReceberPage() {
                             </div>
                         </div>
 
-                        {/* Perda de faturamento */}
                         <div className="flex flex-col justify-between rounded-2xl bg-black/60 backdrop-blur-md border border-red-500/20 p-4 min-h-[90px]">
                             <span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide leading-tight">Perda Fat.</span>
                             <div>
@@ -328,49 +319,32 @@ export default async function ContasAReceberPage() {
 
                     {/* ROW 3 — Action buttons */}
                     <div className="grid grid-cols-3 gap-4">
-                        <Link
-                            href="/cadastro"
-                            className="flex flex-col items-center justify-center gap-3 rounded-2xl bg-orange-500 hover:bg-orange-400 active:bg-orange-600 transition-colors p-5 min-h-[110px] text-center"
-                        >
-                            <Banknote size={28} strokeWidth={1.8} className="text-black" />
-                            <span className="text-xs font-bold text-black leading-tight">Lançamento de Recebimento</span>
-                        </Link>
-
-                        <button className="flex flex-col items-center justify-center gap-3 rounded-2xl bg-orange-500 hover:bg-orange-400 active:bg-orange-600 transition-colors p-5 min-h-[110px] text-center">
-                            <BookOpen size={28} strokeWidth={1.8} className="text-black" />
-                            <span className="text-xs font-bold text-black leading-tight">Contas de recebimento</span>
-                        </button>
-
-                        <Link
-                            href="/consultar-clientes"
-                            className="flex flex-col items-center justify-center gap-3 rounded-2xl bg-orange-500 hover:bg-orange-400 active:bg-orange-600 transition-colors p-5 min-h-[110px] text-center"
-                        >
-                            <UserSearch size={28} strokeWidth={1.8} className="text-black" />
-                            <span className="text-xs font-bold text-black leading-tight">Consultar Clientes</span>
-                        </Link>
+                        <ActionCardButton href="/cadastro" icon={<Banknote />} label="Lançamento de Recebimento" />
+                        <ActionCardButton icon={<BookOpen />} label="Contas de recebimento" />
+                        <ActionCardButton href="/consultar-clientes" icon={<UserSearch />} label="Consultar Clientes" />
                     </div>
                 </div>
 
                 {/* ════════════════════════════════════════
-            BOTTOM — Chart (col-span-12)
-        ════════════════════════════════════════ */}
-                <div className="lg:col-span-12 flex flex-col rounded-2xl bg-black/60 backdrop-blur-md border border-white/10 p-6 gap-5">
+                    BOTTOM — Chart (col-span-12)
+                ════════════════════════════════════════ */}
+                <div className="lg:col-span-12 flex flex-col rounded-2xl bg-black/60 backdrop-blur-md border border-white/10 p-6 gap-4">
+                    <h2 className="text-base font-bold text-orange-500">Histórico de contas à receber</h2>
 
-                    <div className="flex items-center justify-between">
-                        <h2 className="text-base font-bold text-orange-500">
-                            Histórico de contas à receber
-                        </h2>
-                        <span className="rounded-full bg-orange-500/15 border border-orange-500/40 px-4 py-1 text-xs font-bold text-orange-400">
-                            Previsão {brl(totalAReceber)}
-                        </span>
-                    </div>
-
-                    <RecebimentosChart data={chartData} />
+                    <RecebimentosChart
+                        monthlyData={monthlyData}
+                        currentMonth={currentMonth}
+                        selectedDate={currentDate}
+                        previsaoMes={previsaoMes}
+                    />
 
                     <div className="flex justify-center pt-1 border-t border-white/10">
-                        <button className="text-xs text-gray-400 hover:text-orange-500 transition-colors underline-offset-4 hover:underline">
+                        <Link 
+                            href={`/contas-a-receber/lista?month=${currentMonth}`}
+                            className="text-xs text-gray-400 hover:text-orange-500 transition-colors underline-offset-4 hover:underline"
+                        >
                             ↓ Ver histórico de recebimentos
-                        </button>
+                        </Link>
                     </div>
                 </div>
 

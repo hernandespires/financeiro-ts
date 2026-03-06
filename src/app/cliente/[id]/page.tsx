@@ -1,66 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ChevronLeft, Building2, CalendarClock, TrendingDown, ShieldAlert, CheckCircle, AlertCircle, Clock } from "lucide-react";
+import { ChevronLeft, Building2, CalendarClock, TrendingDown } from "lucide-react";
 import { supabaseAdmin } from "@/lib/supabase";
 import ParcelaActions from "@/components/ParcelaActions";
+import RiskBadge, { riskConfig, RiskStatus } from "@/components/RiskBadge";
+import { brl, toDateStr, daysLate, fmtDate } from "@/lib/utils";
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-const brl = (v: number) =>
-    new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
-
-const toDateStr = (d: Date): string =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-
-const daysLate = (dueDateStr: string, todayStr: string): number => {
-    const due = new Date(dueDateStr + "T00:00:00");
-    const tod = new Date(todayStr + "T00:00:00");
-    return Math.round((tod.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
-};
-
-const fmtDate = (iso: string | null | undefined): string => {
-    if (!iso) return "—";
-    const [y, m, d] = iso.split("-");
-    return `${d}/${m}/${y}`;
-};
-
-// ─── Risk badge ───────────────────────────────────────────────────────────────
-type RiskStatus = "EM DIA" | "ATRASO" | "INADIMPLENTE" | "PERDA" | "CONCLUÍDO";
-
-const riskConfig: Record<
-    RiskStatus,
-    { label: string; badge: string; glow: string; icon: React.ReactNode }
-> = {
-    "EM DIA": {
-        label: "Em Dia",
-        badge: "bg-green-500/10 text-green-400 border border-green-500/30",
-        glow: "shadow-[0_0_32px_rgba(34,197,94,0.15)]",
-        icon: <CheckCircle size={16} />,
-    },
-    "ATRASO": {
-        label: "Em Atraso",
-        badge: "bg-orange-500/10 text-orange-400 border border-orange-500/30",
-        glow: "shadow-[0_0_32px_rgba(249,115,22,0.15)]",
-        icon: <Clock size={16} />,
-    },
-    "INADIMPLENTE": {
-        label: "Inadimplente",
-        badge: "bg-red-500/10 text-red-400 border border-red-500/30",
-        glow: "shadow-[0_0_32px_rgba(239,68,68,0.15)]",
-        icon: <AlertCircle size={16} />,
-    },
-    "PERDA": {
-        label: "Perda de Faturamento",
-        badge: "bg-red-900/20 text-red-600 border border-red-700/40",
-        glow: "shadow-[0_0_32px_rgba(185,28,28,0.2)]",
-        icon: <ShieldAlert size={16} />,
-    },
-    "CONCLUÍDO": {
-        label: "Concluído",
-        badge: "bg-gray-500/10 text-gray-400 border border-gray-500/20",
-        glow: "",
-        icon: <CheckCircle size={16} />,
-    },
-};
 
 // ─── Parcel status badge ──────────────────────────────────────────────────────
 function ParcelBadge({
@@ -179,7 +124,6 @@ export default async function ClienteDetailPage({
         else riskStatus = "EM DIA";
     }
 
-    const risk = riskConfig[riskStatus];
 
     const valorTotalAtivo = contratos.reduce(
         (s, ct) => s + (ct.valor_total_contrato ?? 0), 0
@@ -245,19 +189,14 @@ export default async function ClienteDetailPage({
 
             {/* Profile Hero Card */}
             <div
-                className={`rounded-2xl bg-black/60 backdrop-blur-md border border-white/10 p-8 ${risk.glow} transition-shadow duration-300`}
+                className={`rounded-2xl bg-black/60 backdrop-blur-md border border-white/10 p-8 ${riskConfig[riskStatus].glow} transition-shadow duration-300`}
             >
                 <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-6">
 
                     {/* Left: Identity */}
                     <div className="flex flex-col gap-3">
                         {/* Risk badge */}
-                        <span
-                            className={`self-start inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide ${risk.badge}`}
-                        >
-                            {risk.icon}
-                            {risk.label}
-                        </span>
+                        <RiskBadge status={riskStatus} size="lg" />
 
                         <h1 className="text-3xl font-black text-white tracking-tight leading-tight">
                             {cliente.nome_cliente}

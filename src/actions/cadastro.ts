@@ -1,6 +1,7 @@
 'use server'
 
 import { supabaseAdmin } from '../lib/supabase';
+import { calcularDataDisponibilidade } from '../lib/utils';
 
 export type TipoCadastro = 'RECORRENTE' | 'A_VISTA' | 'PONTUAL' | 'ANTIGO';
 
@@ -162,7 +163,11 @@ export async function cadastrarClienteCompleto(dados: DadosCadastroCompleto) {
                     tipo_parcela: 'CONTRATO',
                     categoria: i === 1 ? 'NOVOS CLIENTES' : 'À VISTA',
                     status_manual_override: 'NORMAL',
-                    observacao: `Pagamento ${i}/${quantidadeComValor} (À Vista)`
+                    observacao: `Pagamento ${i}/${quantidadeComValor} (À Vista)`,
+                    data_disponibilidade_prevista: calcularDataDisponibilidade(
+                        dataVenc.toISOString().split('T')[0],
+                        dados.forma_pagamento
+                    ),
                 });
 
                 if (periodicidadeFinal === 'SEMANAL') dataVenc.setDate(dataVenc.getDate() + 7);
@@ -210,10 +215,14 @@ export async function cadastrarClienteCompleto(dados: DadosCadastroCompleto) {
                     sub_indice: 0,
                     data_vencimento: dataVenc.toISOString().split('T')[0],
                     valor_previsto: valor,
-                    tipo_parcela: 'CONTRATO', // Todos são CONTRATO agora, pois é o histórico completo
+                    tipo_parcela: 'CONTRATO',
                     categoria: categoriaDefinida,
                     status_manual_override: statusManual,
-                    observacao: `Gerado via Dashboard (${dados.tipo_cadastro})`
+                    observacao: `Gerado via Dashboard (${dados.tipo_cadastro})`,
+                    data_disponibilidade_prevista: calcularDataDisponibilidade(
+                        dataVenc.toISOString().split('T')[0],
+                        dados.forma_pagamento
+                    ),
                 });
 
                 if (periodicidadeFinal === 'SEMANAL') dataVenc.setDate(dataVenc.getDate() + 7);
