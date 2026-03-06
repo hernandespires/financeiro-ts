@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import Header from "@/components/Header";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -26,9 +27,21 @@ export default function RootLayout({
     <html lang="pt-BR">
       <body
         suppressHydrationWarning
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-cover bg-center bg-no-repeat bg-fixed min-h-screen text-white`}
+        style={{
+          backgroundImage: "url('/wallpaper.png')",
+          backgroundColor: "#111111" // Cor de segurança caso a imagem demore 1 segundo para carregar
+        }}
       >
-        {children}
+        {/* Floating Header */}
+        <div className="max-w-7xl mx-auto pt-6 px-4">
+          <Header />
+        </div>
+
+        {/* Page Content */}
+        <main className="max-w-7xl mx-auto px-4 py-8">
+          {children}
+        </main>
       </body>
     </html>
   );

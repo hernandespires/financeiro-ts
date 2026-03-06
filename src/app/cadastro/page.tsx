@@ -476,28 +476,22 @@ export default function CadastroPage() {
         const segmentoErr = form.segmento && !SEGMENTOS.includes(form.segmento)
             ? 'Selecione um segmento válido.' : undefined;
 
-        // ── Date validation: split by contract type ─────────────────────────────────
+        // ── Date validation: expiration shield (RECORRENTE, A_VISTA, PONTUAL only) ──
+        // ANTIGO is explicitly for historical/finished contracts — skip expiration check.
         let dataInicioErr: string | undefined;
 
-        if (tipo === 'ANTIGO') {
-            // For Cliente Antigo: data_inicio CAN be in the past, but the contract
-            // must not be already expired (data_inicio + periodo_meses >= today).
-            if (!form.data_inicio) {
-                dataInicioErr = 'Data de Início é obrigatória.';
-            } else {
-                const meses = parseInt(form.periodo_meses || '0', 10);
-                const fim = new Date(`${form.data_inicio}T12:00:00Z`);
-                fim.setMonth(fim.getMonth() + meses);
-                const hoje = new Date();
-                hoje.setHours(0, 0, 0, 0);
-                if (fim < hoje) {
-                    dataInicioErr =
-                        'A data de início e o período indicam que este contrato já expirou. Verifique as datas.';
-                }
+        if (!form.data_inicio) {
+            dataInicioErr = 'Data de Início é obrigatória.';
+        } else if (tipo !== 'ANTIGO') {
+            const meses = parseInt(form.periodo_meses || '0', 10);
+            const fim = new Date(`${form.data_inicio}T12:00:00Z`);
+            fim.setMonth(fim.getMonth() + meses);
+            const hoje = new Date();
+            hoje.setHours(0, 0, 0, 0);
+            if (fim < hoje) {
+                dataInicioErr =
+                    'A data de início e o período indicam que este contrato já expirou. Para registrar contratos finalizados, utilize a opção Cliente Antigo.';
             }
-        } else {
-            // Past dates are allowed — only require the field is non-empty
-            if (!form.data_inicio) dataInicioErr = 'Data de Início é obrigatória.';
         }
 
         if (cnpjErr || phoneErr || anivErr || dataInicioErr || segmentoErr) {
@@ -879,8 +873,8 @@ export default function CadastroPage() {
                                         </div>
                                     </div>
 
-                                    {/* Período do Contrato: shown for Recorrente, Pontual, Antigo */}
-                                    {isFullFinancial && (
+                                    {/* Período do Contrato: shown for all types except none */}
+                                    {(isFullFinancial || tipo === 'A_VISTA') && (
                                         <div>
                                             <Lbl required>Período do Contrato (Meses)</Lbl>
                                             <input
@@ -891,7 +885,7 @@ export default function CadastroPage() {
                                         </div>
                                     )}
 
-                                    {/* Conditional: À Vista — número de vezes */}
+                                    {/* À Vista — número de vezes */}
                                     {tipo === 'A_VISTA' && (
                                         <div>
                                             <Lbl>Dividir pagamento em (Ex: 1 ou 2 vezes)</Lbl>
@@ -900,6 +894,9 @@ export default function CadastroPage() {
                                                 onChange={e => set('parcelas_com_valor', e.target.value.replace(/\D/g, ''))}
                                                 type="text" inputMode="numeric" placeholder="1" className={inp}
                                             />
+                                            <p className="mt-1 text-[10px] text-zinc-500">
+                                                Nº de vezes que o valor total será dividido para cobrança.
+                                            </p>
                                         </div>
                                     )}
 

@@ -29,7 +29,7 @@ export interface DadosCadastroCompleto {
     porcentagem_imposto: number;
     categoria_faturamento: string;
     parcelas_com_valor?: number;
-    parcela_atual?: number; // Obsoleto, mantido só para a interface não quebrar se o front mandar
+    parcela_atual?: number;
 }
 
 export async function cadastrarClienteCompleto(dados: DadosCadastroCompleto) {
@@ -84,12 +84,16 @@ export async function cadastrarClienteCompleto(dados: DadosCadastroCompleto) {
         if (erroCliente) throw new Error(`Erro ao criar cliente: ${erroCliente.message}`);
         clienteCriadoNestaSessaoId = clienteInserido.id;
 
-        // --- TRATAMENTO DE PERIODICIDADE E PARCELAS ---
+        // --- TRATAMENTO DE PERIODICIDADE E PARCELAS (AGORA BLINDADO) ---
         let periodicidadeFinal = (dados.periodicidade || 'MENSAL').toUpperCase();
         let quantidadeComValor = 1;
 
         if (dados.tipo_cadastro === 'A_VISTA') {
-            quantidadeComValor = (dados.parcelas_com_valor && dados.parcelas_com_valor > 0) ? dados.parcelas_com_valor : 1;
+            // Força a conversão para número e garante que seja no mínimo 1
+            quantidadeComValor = Number(dados.parcelas_com_valor);
+            if (isNaN(quantidadeComValor) || quantidadeComValor < 1) {
+                quantidadeComValor = 1;
+            }
             if (quantidadeComValor === 1) periodicidadeFinal = 'MENSAL';
         }
 
@@ -97,12 +101,19 @@ export async function cadastrarClienteCompleto(dados: DadosCadastroCompleto) {
         if (periodicidadeFinal === 'SEMANAL') multiplicador = 4;
         if (periodicidadeFinal === 'QUINZENAL') multiplicador = 2;
 
-        const quantidade_parcelas_total = dados.periodo_meses * multiplicador;
+        // No "À Vista", o período de meses pode vir vazio, então assumimos 1 mês como mínimo seguro.
+        const mesesSeguros = Number(dados.periodo_meses) > 0 ? Number(dados.periodo_meses) : 1;
 
-        let divisor = quantidade_parcelas_total || 1;
+        let quantidade_parcelas_total = mesesSeguros * multiplicador;
+
+        if (dados.tipo_cadastro === 'A_VISTA') {
+            quantidade_parcelas_total = quantidadeComValor;
+        }
+
+        let divisor = quantidade_parcelas_total > 0 ? quantidade_parcelas_total : 1;
         if (dados.tipo_cadastro === 'A_VISTA') divisor = quantidadeComValor;
 
-        const valor_parcela_calculado = Number((dados.valor_total / divisor).toFixed(2));
+        const valor_parcela_calculado = Number((Number(dados.valor_total) / divisor).toFixed(2));
 
         // --- 4. INSERE O CONTRATO ---
         let tipoContratoEnum = 'RECORRENTE';
@@ -119,10 +130,10 @@ export async function cadastrarClienteCompleto(dados: DadosCadastroCompleto) {
             tipo_contrato: tipoContratoEnum,
             periodicidade: periodicidadeFinal,
             data_inicio: dados.data_inicio,
-            valor_total_contrato: dados.valor_total,
+            valor_total_contrato: Number(dados.valor_total),
             valor_base_parcela: valor_parcela_calculado,
-            parcelas_total: quantidade_parcelas_total,
-            imposto_percentual: dados.porcentagem_imposto || 0,
+            parcelas_total: quantidade_parcelas_total, // Garantido de ser um Inteiro > 0
+            imposto_percentual: Number(dados.porcentagem_imposto) || 0,
             cnpj_vinculado: dados.cnpj_vinculado,
             forma_pagamento: dados.forma_pagamento
         };
@@ -161,7 +172,7 @@ export async function cadastrarClienteCompleto(dados: DadosCadastroCompleto) {
 
             // Parcela "Despertador" pro fim do contrato
             const dataFimContrato = new Date(`${dados.data_inicio}T12:00:00Z`);
-            dataFimContrato.setMonth(dataFimContrato.getMonth() + dados.periodo_meses);
+            dataFimContrato.setMonth(dataFimContrato.getMonth() + mesesSeguros);
 
             parcelasParaInserir.push({
                 contrato_id: contrato.id,
@@ -172,7 +183,7 @@ export async function cadastrarClienteCompleto(dados: DadosCadastroCompleto) {
                 tipo_parcela: 'ADICIONAL',
                 categoria: 'À VISTA',
                 status_manual_override: 'RENOVAR CONTRATO',
-                observacao: `Término do contrato de ${dados.periodo_meses} meses`
+                observacao: `Término do contrato de ${mesesSeguros} meses`
             });
 
         } else {
