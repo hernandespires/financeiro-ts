@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { supabaseAdmin } from "@/lib/supabase";
 import { brl, fmtDate, daysLate, toDateStr } from "@/lib/utils";
-import { isParcelaValidaParaPrevisao } from "@/lib/financeRules";
+import { isParcelaValidaParaPrevisao, getRiskStatus } from "@/lib/financeRules";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface RawParcela {
@@ -33,11 +33,12 @@ interface RawParcela {
     } | null;
 }
 
-type Category = "pagos" | "atrasados" | "proximos" | "abertos";
+type Category = "pagos" | "em_risco" | "proximos" | "abertos";
 
 interface Classified extends RawParcela {
     category: Category;
     daysLateVal: number;
+    riskStatus: string;
 }
 
 // ─── Status Pill ──────────────────────────────────────────────────────────────
@@ -48,12 +49,26 @@ function StatusPill({ item }: { item: Classified }) {
                 <CheckCircle2 size={9} /> Pago
             </span>
         );
-    if (item.category === "atrasados")
+    if (item.category === "em_risco") {
+        if (item.riskStatus === "PERDA")
+            return (
+                <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide border bg-red-900/40 text-red-300 border-red-700/60">
+                    <AlertTriangle size={9} /> PERDA FAT.
+                </span>
+            );
+        if (item.riskStatus === "INADIMPLENTE")
+            return (
+                <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide border bg-red-500/15 text-red-400 border-red-500/30">
+                    <AlertTriangle size={9} /> INADIMPLENTE
+                </span>
+            );
+        // ATRASO
         return (
-            <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide border bg-red-500/15 text-red-400 border-red-500/30">
+            <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide border bg-orange-500/15 text-orange-400 border-orange-500/40">
                 <AlertTriangle size={9} /> {item.daysLateVal}d atraso
             </span>
         );
+    }
     if (item.category === "proximos")
         return (
             <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide border bg-orange-500/15 text-orange-400 border-orange-500/30">
@@ -121,23 +136,25 @@ export default async function ListaRecebimentosMes({
     // ── Classify each parcela ─────────────────────────────────────────────────
     const classified: Classified[] = raw.map((p) => {
         const dl = daysLate(p.data_vencimento, todayStr);
+        const risk = getRiskStatus(dl);
+
         let category: Category;
         if (p.status_manual_override === "PAGO") {
             category = "pagos";
-        } else if (dl > 0) {
-            category = "atrasados";
-        } else if (dl >= -3) {
-            category = "proximos";  // due today or within next 3 days
+        } else if (risk === "ATRASO" || risk === "INADIMPLENTE" || risk === "PERDA") {
+            category = "em_risco";
+        } else if (dl >= -3 && dl <= 0) {
+            category = "proximos"; // due today or within next 3 days
         } else {
             category = "abertos";
         }
-        return { ...p, category, daysLateVal: dl };
+        return { ...p, category, daysLateVal: dl, riskStatus: risk };
     });
 
     // ── Counts & totals per category ──────────────────────────────────────────
     const stats = {
         todos: { count: classified.length, total: classified.reduce((s, p) => s + p.valor_previsto, 0) },
-        atrasados: { count: classified.filter(p => p.category === "atrasados").length, total: classified.filter(p => p.category === "atrasados").reduce((s, p) => s + p.valor_previsto, 0) },
+        em_risco: { count: classified.filter(p => p.category === "em_risco").length, total: classified.filter(p => p.category === "em_risco").reduce((s, p) => s + p.valor_previsto, 0) },
         proximos: { count: classified.filter(p => p.category === "proximos").length, total: classified.filter(p => p.category === "proximos").reduce((s, p) => s + p.valor_previsto, 0) },
         abertos: { count: classified.filter(p => p.category === "abertos").length, total: classified.filter(p => p.category === "abertos").reduce((s, p) => s + p.valor_previsto, 0) },
         pagos: { count: classified.filter(p => p.category === "pagos").length, total: classified.filter(p => p.category === "pagos").reduce((s, p) => s + p.valor_previsto, 0) },
@@ -146,7 +163,7 @@ export default async function ListaRecebimentosMes({
     // ── Apply filter ──────────────────────────────────────────────────────────
     const visible =
         filter === "todos" ? classified :
-            filter === "atrasados" ? classified.filter(p => p.category === "atrasados") :
+            filter === "em_risco" ? classified.filter(p => p.category === "em_risco") :
                 filter === "proximos" ? classified.filter(p => p.category === "proximos") :
                     filter === "abertos" ? classified.filter(p => p.category === "abertos") :
                         filter === "pagos" ? classified.filter(p => p.category === "pagos") :
@@ -170,8 +187,8 @@ export default async function ListaRecebimentosMes({
                 inactiveClass: "text-gray-500 border-white/10 hover:border-white/20 hover:text-gray-300",
             },
             {
-                key: "atrasados",
-                label: `Em Atraso (${stats.atrasados.count})`,
+                key: "em_risco",
+                label: `Em Atraso / Risco (${stats.em_risco.count})`,
                 icon: <AlertTriangle size={11} />,
                 activeClass: "bg-red-500/20 text-red-400 border-red-500/40",
                 inactiveClass: "text-gray-500 border-white/10 hover:border-red-500/30 hover:text-red-400",
@@ -256,12 +273,12 @@ export default async function ListaRecebimentosMes({
                                 <TrendingUp size={9} /> {stats.todos.count} parcelas
                             </span>
                         </div>
-                        {stats.atrasados.count > 0 && (
+                        {stats.em_risco.count > 0 && (
                             <div className="flex flex-col items-center rounded-2xl bg-red-500/10 border border-red-500/20 px-6 py-4 gap-0.5">
-                                <span className="text-[9px] text-red-400/70 uppercase tracking-widest font-semibold">Em atraso</span>
-                                <span className="text-2xl font-black text-red-400 leading-none">{brl(stats.atrasados.total)}</span>
+                                <span className="text-[9px] text-red-400/70 uppercase tracking-widest font-semibold">Em risco</span>
+                                <span className="text-2xl font-black text-red-400 leading-none">{brl(stats.em_risco.total)}</span>
                                 <span className="text-[9px] text-gray-500 flex items-center gap-1 mt-0.5">
-                                    <TrendingDown size={9} /> {stats.atrasados.count} parcelas
+                                    <TrendingDown size={9} /> {stats.em_risco.count} parcelas
                                 </span>
                             </div>
                         )}
@@ -341,7 +358,7 @@ export default async function ListaRecebimentosMes({
                                     const clientId = p.contratos?.clientes?.id;
                                     const nome = p.contratos?.clientes?.nome_cliente ?? "—";
                                     const href = clientId ? `/cliente/${clientId}` : "#";
-                                    const isLate = p.category === "atrasados";
+                                    const isLate = p.category === "em_risco";
                                     const isProximo = p.category === "proximos";
 
                                     return (

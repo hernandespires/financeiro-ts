@@ -6,6 +6,7 @@ import { Plus, ChevronRight, SlidersHorizontal, X } from "lucide-react";
 import { supabaseAdmin } from "@/lib/supabase";
 import KpiCard from "@/components/KpiCard";
 import ClientSearchInput from "@/components/ClientSearchInput";
+import { getRiskStatus } from "@/lib/financeRules";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 type ClientStatus = "EM DIA" | "ATRASO" | "INADIMPLENTE" | "PERDA" | "CONCLUÍDO";
@@ -123,10 +124,8 @@ export default async function ConsultarClientesPage({
                 const maxLate = Math.max(
                     ...openParcelas.map((p) => daysLate(p.data_vencimento, todayStr))
                 );
-                if (maxLate > 30) status = "PERDA";
-                else if (maxLate >= 15) status = "INADIMPLENTE";
-                else if (maxLate >= 1) status = "ATRASO";
-                else status = "EM DIA";
+                // Use central brain — getRiskStatus(>=30) = PERDA, (>=15) = INADIMPLENTE, etc.
+                status = getRiskStatus(maxLate) as ClientStatus;
             }
 
             // Sum total active contract value

@@ -17,7 +17,8 @@ import { brl } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface MonthlyParcela {
-    data_vencimento: string; // "YYYY-MM-DD"
+    data_vencimento: string;                      // "YYYY-MM-DD"
+    data_disponibilidade_prevista?: string;        // optional clearing date
     valor_previsto: number;
 }
 
@@ -30,8 +31,14 @@ interface ChartDayPoint {
 interface RecebimentosChartProps {
     monthlyData: MonthlyParcela[];
     currentMonth: string;   // "YYYY-MM"
-    selectedDate: string;   // "YYYY-MM-DD"
+    selectedDate: string;   // "YYYY-MM-DD" (daily) or "YYYY-MM" (annual)
     previsaoMes: number;
+    /** Which date field to group by. Defaults to 'data_vencimento'. */
+    dateKey?: 'data_vencimento' | 'data_disponibilidade_prevista';
+    /** Render 12-month annual bars instead of daily bars. */
+    isAnnual?: boolean;
+    /** The year string ("YYYY") used when isAnnual is true. */
+    year?: string;
 }
 
 // ─── Custom Tooltip ───────────────────────────────────────────────────────────
@@ -41,13 +48,17 @@ interface CustomTooltipProps {
     label?: string;
 }
 
-function CustomTooltip({ active, payload }: CustomTooltipProps) {
+function CustomTooltip({ active, payload, isAnnual }: CustomTooltipProps & { isAnnual?: boolean }) {
     if (!active || !payload?.length) return null;
     const { value, payload: pt } = payload[0];
-    const [y, m, d] = pt.date.split("-");
+    // Annual: date is "YYYY-MM" — display as "MMM/YYYY"
+    // Daily:  date is "YYYY-MM-DD" — display as "DD/MM/YYYY"
+    const label = isAnnual
+        ? (() => { const [y, m] = pt.date.split('-'); return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }); })()
+        : pt.date.split('-').reverse().join('/');
     return (
         <div className="rounded-xl bg-black/90 border border-white/10 px-3 py-2 shadow-xl text-xs">
-            <p className="text-gray-400 mb-1">{d}/{m}/{y}</p>
+            <p className="text-gray-400 mb-1 capitalize">{label}</p>
             <p className="font-bold text-orange-400">{brl(value)}</p>
         </div>
     );
@@ -85,49 +96,76 @@ export default function RecebimentosChart({
     currentMonth,
     selectedDate,
     previsaoMes,
+    dateKey = 'data_vencimento',
+    isAnnual = false,
+    year,
 }: RecebimentosChartProps) {
     const router = useRouter();
 
-    // Build a day-keyed sum map
-    const sumByDate = new Map<string, number>();
-    for (const p of monthlyData) {
-        sumByDate.set(p.data_vencimento, (sumByDate.get(p.data_vencimento) ?? 0) + p.valor_previsto);
+    // ── Build chart points ─────────────────────────────────────────────────────
+    const chartPoints: ChartDayPoint[] = [];
+
+    if (isAnnual && year) {
+        // Annual mode: group all parcelas by month → 12 bars
+        const monthNames = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+        const sumByMonth = new Map<string, number>();
+        for (const p of monthlyData) {
+            const dKey = p[dateKey] ?? p.data_vencimento;
+            if (!dKey) continue;
+            const ym = dKey.slice(0, 7); // 'YYYY-MM'
+            sumByMonth.set(ym, (sumByMonth.get(ym) ?? 0) + (p.valor_previsto || 0));
+        }
+        for (let i = 0; i < 12; i++) {
+            const mStr = String(i + 1).padStart(2, "0");
+            const ym = `${year}-${mStr}`;
+            chartPoints.push({ date: ym, day: monthNames[i], total: sumByMonth.get(ym) ?? 0 });
+        }
+    } else {
+        // Daily mode: one bar per day in the current month
+        const sumByDate = new Map<string, number>();
+        for (const p of monthlyData) {
+            const key = p[dateKey] ?? p.data_vencimento;
+            sumByDate.set(key, (sumByDate.get(key) ?? 0) + p.valor_previsto);
+        }
+        const days = daysInMonth(currentMonth);
+        for (let i = 0; i < days; i++) {
+            const dayStr = String(i + 1).padStart(2, "0");
+            const date = `${currentMonth}-${dayStr}`;
+            chartPoints.push({ date, day: dayStr, total: sumByDate.get(date) ?? 0 });
+        }
     }
 
-    // Generate all days in the month
-    const days = daysInMonth(currentMonth);
-    const chartPoints: ChartDayPoint[] = Array.from({ length: days }, (_, i) => {
-        const dayNum = i + 1;
-        const dayStr = String(dayNum).padStart(2, "0");
-        const date = `${currentMonth}-${dayStr}`;
-        return {
-            date,
-            day: dayStr,
-            total: sumByDate.get(date) ?? 0,
-        };
-    });
-
-    // Reference line for today if in current month
+    // Reference line for today — daily mode only
     const todayStr = new Date().toISOString().split("T")[0];
-    const todayInMonth = todayStr.startsWith(currentMonth)
-        ? todayStr.split("-")[2] // day "DD"
+    const todayInMonth = !isAnnual && todayStr.startsWith(currentMonth)
+        ? todayStr.split("-")[2] // "DD"
         : null;
 
-    function handleBarClick(data: { payload?: ChartDayPoint }) {
-        if (!data?.payload?.date) return;
-        const { date } = data.payload;
-        router.push(`?date=${date}&month=${currentMonth}`, { scroll: false });
+    function navigate(date: string) {
+        if (isAnnual) {
+            // Drill-down: annual bar click → navigate to monthly view for that month
+            router.push(`?period=monthly&date=${date}-01`, { scroll: false });
+        } else {
+            router.push(`?date=${date}&month=${currentMonth}`, { scroll: false });
+        }
     }
 
     function handlePrevMonth() {
-        const pm = prevMonth(currentMonth);
-        // Keep selected date in same month as navigation target
-        router.push(`?month=${pm}&date=${pm}-01`, { scroll: false });
+        if (isAnnual && year) {
+            router.push(`?period=annual&date=${Number(year) - 1}-01`, { scroll: false });
+        } else {
+            const pm = prevMonth(currentMonth);
+            router.push(`?month=${pm}&date=${pm}-01`, { scroll: false });
+        }
     }
 
     function handleNextMonth() {
-        const nm = nextMonth(currentMonth);
-        router.push(`?month=${nm}&date=${nm}-01`, { scroll: false });
+        if (isAnnual && year) {
+            router.push(`?period=annual&date=${Number(year) + 1}-01`, { scroll: false });
+        } else {
+            const nm = nextMonth(currentMonth);
+            router.push(`?month=${nm}&date=${nm}-01`, { scroll: false });
+        }
     }
 
     return (
@@ -143,7 +181,7 @@ export default function RecebimentosChart({
                         <ChevronLeft size={14} />
                     </button>
                     <span className="text-sm font-bold text-white capitalize min-w-[120px] text-center">
-                        {formatMonthLabel(currentMonth)}
+                        {isAnnual && year ? year : formatMonthLabel(currentMonth)}
                     </span>
                     <button
                         onClick={handleNextMonth}
@@ -172,9 +210,7 @@ export default function RecebimentosChart({
                         onClick={(state: any) => {
                             if (state && state.activePayload && state.activePayload.length > 0) {
                                 const data = state.activePayload[0].payload;
-                                if (data && data.date) {
-                                    router.push(`?date=${data.date}&month=${currentMonth}`, { scroll: false });
-                                }
+                                if (data && data.date) navigate(data.date);
                             }
                         }}
                     >
@@ -205,24 +241,13 @@ export default function RecebimentosChart({
                         />
                         <Tooltip
                             cursor={{ fill: "#ea580c", opacity: 0.1 }}
-                            content={({ active, payload }) => {
-                                if (active && payload && payload.length) {
-                                    const d = payload[0].payload as ChartDayPoint;
-                                    return (
-                                        <div className="bg-black/90 border border-white/10 p-3 rounded-xl shadow-xl">
-                                            <p className="text-xs text-gray-400 mb-1">{d.date.split("-").reverse().join("/")}</p>
-                                            <p className="text-sm font-bold text-orange-500">
-                                                {new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(d.total)}
-                                            </p>
-                                        </div>
-                                    );
-                                }
-                                return null;
-                            }}
+                            content={({ active, payload }) => (
+                                <CustomTooltip active={active} payload={payload as any} isAnnual={isAnnual} />
+                            )}
                         />
 
-                        {/* Today's reference line */}
-                        {todayInMonth && (
+                        {/* Today's reference line — daily mode only */}
+                        {!isAnnual && todayInMonth && (
                             <ReferenceLine
                                 x={todayInMonth}
                                 stroke="#f97316"
@@ -244,9 +269,7 @@ export default function RecebimentosChart({
                             cursor="pointer"
                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
                             onClick={(data: any) => {
-                                if (data && data.date) {
-                                    router.push(`?date=${data.date}&month=${currentMonth}`, { scroll: false });
-                                }
+                                if (data && data.date) navigate(data.date);
                             }}
                         >
                             {chartPoints.map((entry, index) => (

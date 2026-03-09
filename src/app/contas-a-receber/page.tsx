@@ -14,7 +14,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import RecebimentosChart, { MonthlyParcela } from "@/components/RecebimentosChart";
 import ActionCardButton from "@/components/ActionCardButton";
 import { brl, toDateStr, daysLate } from "@/lib/utils";
-import { isParcelaValidaParaPrevisao, getRiskStatus } from "@/lib/financeRules";
+import { isParcelaValidaParaPrevisao, getRiskStatus, isNotDeleted } from "@/lib/financeRules";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface RawParcela {
@@ -87,16 +87,20 @@ export default async function ContasAReceberPage({
         },
     }));
 
-    // ── Apply cascade soft-delete filter ──────────────────────────────────────────────
-    // Excludes: soft-deleted parcelas, parcelas from deleted contracts/clients,
-    // INADIMPLENTE (≥15d late), PERDA, RENOVAR CONTRATO.
-    // Used as the base for ALL downstream calculations.
-    const parcelasValidas = parcelas.filter((p) => isParcelaValidaParaPrevisao(p, todayStr));
+    // ── Apply soft-delete-only filter (for risk buckets) ─────────────────────
+    // Keeps INADIMPLENTE and PERDA installments so those buckets are not zero.
+    // Only removes parcelas whose own record, contract, or client is soft-deleted.
+    const parcelasAtivas = parcelas.filter((p) => isNotDeleted(p));
+
+    // ── Apply full forecast filter (excludes INADIMPLENTE/PERDA + RENOVAR) ────
+    // Used for chart, agenda, and previsão — where we intentionally exclude
+    // unrecoverable installments from the expected revenue calculation.
+    const parcelasValidas = parcelasAtivas.filter((p) => isParcelaValidaParaPrevisao(p, todayStr));
 
     // ── 2. CONTRACT-LEVEL RISK ASSESSMENT (Cross-Default logic) ────────────────
-    //   Uses parcelasValidas so deleted clients/contracts are already excluded.
+    //   Built from parcelasAtivas so INADIMPLENTE/PERDA contracts are counted.
     const contratoMap = new Map<string, RawParcela[]>();
-    for (const p of parcelasValidas) {
+    for (const p of parcelasAtivas) {
         const key = p.contrato_id ?? `solo-${p.id}`;
         if (!contratoMap.has(key)) contratoMap.set(key, []);
         contratoMap.get(key)!.push(p);
@@ -109,7 +113,6 @@ export default async function ContasAReceberPage({
 
     for (const [, group] of contratoMap) {
         const contractBalance = group.reduce((s, p) => s + (p.valor_previsto ?? 0), 0);
-        // Use getRiskStatus from financeRules for consistent classification
         const maxLate = Math.max(...group.map((p) => daysLate(p.data_vencimento, todayStr)));
         const risco = getRiskStatus(maxLate);
 
@@ -359,7 +362,7 @@ export default async function ContasAReceberPage({
                     BOTTOM — Chart (col-span-12)
                 ════════════════════════════════════════ */}
                 <div className="lg:col-span-12 flex flex-col rounded-2xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl p-6 gap-4">
-                    <h2 className="text-base font-bold text-orange-500">Histórico de contas à receber</h2>
+                    <h2 className="text-base font-bold text-orange-500">Contas a vencer</h2>
 
                     <RecebimentosChart
                         monthlyData={monthlyData}

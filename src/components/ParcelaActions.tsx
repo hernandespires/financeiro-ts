@@ -2,7 +2,7 @@
 
 import { useState, useTransition, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { Check, GitBranch, Loader2, X, CreditCard, Scissors, Pencil, Trash2, AlertTriangle } from "lucide-react";
+import { Check, GitBranch, Loader2, X, CreditCard, Scissors, Pencil, Trash2, AlertTriangle, RefreshCw, XCircle } from "lucide-react";
 import { registrarPagamentoCompleto, desmembrarParcela, editarParcela, softDeleteParcela } from "@/actions/parcelas";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -136,13 +136,13 @@ function PaymentModal({
                         onChange={(e) => setPlataforma(e.target.value)}
                         className={inputCls + " cursor-pointer"}
                     >
-                        <option value="STRIPE BRASIL">STRIPE BRASIL</option>
-                        <option value="STRIPE EUA">STRIPE EUA</option>
-                        <option value="IUGU">IUGU</option>
-                        <option value="LOJA">LOJA</option>
-                        <option value="PIX">PIX</option>
-                        <option value="APP DE TRANSFERÊNCIA">APP DE TRANSFERÊNCIA</option>
-                        <option value="DINHEIRO">DINHEIRO</option>
+                        <option value="STRIPE BRASIL" className="bg-[#111] text-white">STRIPE BRASIL</option>
+                        <option value="STRIPE EUA" className="bg-[#111] text-white">STRIPE EUA</option>
+                        <option value="IUGU" className="bg-[#111] text-white">IUGU</option>
+                        <option value="LOJA" className="bg-[#111] text-white">LOJA</option>
+                        <option value="PIX" className="bg-[#111] text-white">PIX</option>
+                        <option value="APP DE TRANSFERÊNCIA" className="bg-[#111] text-white">APP DE TRANSFERÊNCIA</option>
+                        <option value="DINHEIRO" className="bg-[#111] text-white">DINHEIRO</option>
                     </select>
                 </div>
 
@@ -421,12 +421,190 @@ function DeleteParcelaModal({
     );
 }
 
+// ─── Não Renovar Modal ─────────────────────────────────────────────────────────────
+function NaoRenovarModal({
+    parcela,
+    onClose,
+}: {
+    parcela: ParcelaForActions;
+    onClose: () => void;
+}) {
+    const [isPending, startTransition] = useTransition();
+    const [error, setError] = useState<string | null>(null);
+    const [done, setDone] = useState(false);
+
+    function handleConfirmar() {
+        setError(null);
+        startTransition(async () => {
+            // Import inline to avoid circular dep issues
+            const { editarParcelaStatus } = await import("@/actions/parcelas");
+            const res = await editarParcelaStatus(parcela.id, "FINALIZAR PROJETO");
+            if (res.ok) {
+                setDone(true);
+            } else {
+                setError(res.error ?? "Erro desconhecido.");
+            }
+        });
+    }
+
+    return (
+        <Modal onClose={onClose}>
+            <div className="flex items-center gap-3">
+                <span className="flex items-center justify-center w-9 h-9 rounded-xl bg-red-500/10 text-red-400 shrink-0">
+                    <XCircle size={18} />
+                </span>
+                <div>
+                    <h2 className="text-base font-bold text-white">Não Renovar Contrato</h2>
+                    <p className="text-xs text-gray-500">Esta ação é permanente e registra o churn.</p>
+                </div>
+            </div>
+
+            {done ? (
+                <div className="rounded-xl bg-red-500/5 border border-red-500/20 p-4 text-center">
+                    <p className="text-sm text-red-300 font-semibold">✔ Contrato finalizado. Sem renovação.</p>
+                </div>
+            ) : (
+                <>
+                    <div className="rounded-xl bg-red-500/5 border border-red-500/20 p-4">
+                        <p className="text-sm text-gray-300 leading-relaxed">
+                            O status desta parcela será alterado para{" "}
+                            <strong className="text-red-400">FINALIZAR PROJETO</strong>, sinalizando o churn
+                            definitivo deste cliente. Esta ação pode ser revertida pelo admin.
+                        </p>
+                    </div>
+
+                    {error && (
+                        <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+                            {error}
+                        </p>
+                    )}
+
+                    <div className="flex gap-3 justify-end">
+                        <button
+                            onClick={onClose}
+                            disabled={isPending}
+                            className="rounded-xl border border-white/10 hover:border-white/20 text-gray-400 hover:text-white px-4 py-2 text-sm font-medium transition-all disabled:opacity-50"
+                        >
+                            Cancelar
+                        </button>
+                        <button
+                            onClick={handleConfirmar}
+                            disabled={isPending}
+                            className="inline-flex items-center gap-2 rounded-xl bg-red-500 hover:bg-red-400 text-white px-5 py-2 text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {isPending ? <Loader2 size={14} className="animate-spin" /> : <XCircle size={14} />}
+                            {isPending ? "Finalizando…" : "Confirmar Churn"}
+                        </button>
+                    </div>
+                </>
+            )}
+        </Modal>
+    );
+}
+
+// ─── Renovar Modal ──────────────────────────────────────────────────────────────────
+function RenovarModal({
+    parcela,
+    onClose,
+}: {
+    parcela: ParcelaForActions;
+    onClose: () => void;
+}) {
+    const [periodo, setPeriodo] = useState("12");
+    const [valorTotal, setValorTotal] = useState("");
+    const [isPending, startTransition] = useTransition();
+
+    function handleRenovar() {
+        startTransition(async () => {
+            // Backend generation wired in next step
+            console.log("[RenovarModal] Dados para renovação:", {
+                parcelaId: parcela.id,
+                novo_periodo_meses: Number(periodo),
+                novo_valor_total: parseFloat(valorTotal),
+            });
+            onClose();
+        });
+    }
+
+    return (
+        <Modal onClose={onClose}>
+            {/* Header */}
+            <div className="flex items-center gap-3">
+                <span className="flex items-center justify-center w-9 h-9 rounded-xl bg-green-500/10 text-green-400 shrink-0">
+                    <RefreshCw size={18} />
+                </span>
+                <div>
+                    <h2 className="text-base font-bold text-white">Renovar Contrato</h2>
+                    <p className="text-xs text-gray-500">Defina o período e valor da renovação</p>
+                </div>
+            </div>
+
+            {/* Fields */}
+            <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-1.5">
+                    <label className={labelCls}>Novo Período (meses)</label>
+                    <input
+                        type="number"
+                        min="1"
+                        max="60"
+                        step="1"
+                        value={periodo}
+                        onChange={(e) => setPeriodo(e.target.value)}
+                        className={inputCls}
+                    />
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                    <label className={labelCls}>Novo Valor Total (R$)</label>
+                    <input
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        value={valorTotal}
+                        onChange={(e) => setValorTotal(e.target.value)}
+                        placeholder="Ex: 12000.00"
+                        className={inputCls}
+                    />
+                </div>
+
+                <div className="rounded-xl bg-green-500/5 border border-green-500/20 p-3 text-xs text-green-300 leading-relaxed">
+                    📅 Serão geradas <strong className="text-white">{periodo} novas parcelas</strong> com valor
+                    de <strong className="text-white">
+                        {valorTotal ? brl(parseFloat(valorTotal) / Number(periodo)) : "R$ —"}
+                    </strong> cada.
+                </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-3 justify-end">
+                <button
+                    onClick={onClose}
+                    disabled={isPending}
+                    className="rounded-xl border border-white/10 hover:border-white/20 text-gray-400 hover:text-white px-4 py-2 text-sm font-medium transition-all disabled:opacity-50"
+                >
+                    Cancelar
+                </button>
+                <button
+                    onClick={handleRenovar}
+                    disabled={isPending || !valorTotal || Number(periodo) < 1}
+                    className="inline-flex items-center gap-2 rounded-xl bg-green-500 hover:bg-green-400 active:bg-green-600 text-black px-5 py-2 text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                    {isPending ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                    {isPending ? "Processando…" : "Renovar"}
+                </button>
+            </div>
+        </Modal>
+    );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
     const [isPaymentOpen, setIsPaymentOpen] = useState(false);
     const [isSplitOpen, setIsSplitOpen] = useState(false);
     const [isEditOpen, setIsEditOpen] = useState(false);
     const [isDeleteOpen, setIsDeleteOpen] = useState(false);
+    const [isRenewOpen, setIsRenewOpen] = useState(false);
+    const [isNotRenewOpen, setIsNotRenewOpen] = useState(false);
     const [localPago, setLocalPago] = useState(parcela.status_manual_override === "PAGO");
     const [mounted, setMounted] = useState(false);
 
@@ -445,6 +623,41 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
                 <Check size={11} strokeWidth={2.5} />
                 Recebido
             </span>
+        );
+    }
+
+    // RENOVAR CONTRATO — date-gated renewal / churn buttons
+    if (parcela.status_manual_override === "RENOVAR CONTRATO") {
+        const todayStr = new Date().toISOString().split("T")[0];
+        const isLiberado = todayStr >= (parcela.data_vencimento || "2099-01-01");
+
+        return (
+            <>
+                <div className="inline-flex gap-2 items-center justify-center">
+                    <button
+                        onClick={() => setIsRenewOpen(true)}
+                        disabled={!isLiberado}
+                        title={!isLiberado ? "Aguarde a data de término do contrato" : "Processar renovação"}
+                        className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-lg bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500/20 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                    >
+                        Renovar
+                    </button>
+                    <button
+                        onClick={() => setIsNotRenewOpen(true)}
+                        disabled={!isLiberado}
+                        title={!isLiberado ? "Aguarde a data de término do contrato" : "Registrar cancelamento/fim"}
+                        className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-lg bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                    >
+                        Não Renovar
+                    </button>
+                </div>
+                {mounted && isRenewOpen && (
+                    <RenovarModal parcela={parcela} onClose={() => setIsRenewOpen(false)} />
+                )}
+                {mounted && isNotRenewOpen && (
+                    <NaoRenovarModal parcela={parcela} onClose={() => setIsNotRenewOpen(false)} />
+                )}
+            </>
         );
     }
 

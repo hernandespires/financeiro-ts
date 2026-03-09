@@ -52,10 +52,35 @@ export type RiskLevel = 'EM DIA' | 'ATRASO' | 'INADIMPLENTE' | 'PERDA';
  * > 30 days  → PERDA
  */
 export function getRiskStatus(diasAtraso: number): RiskLevel {
-    if (diasAtraso <= 0) return 'EM DIA';
-    if (diasAtraso <= DIAS_TOLERANCIA_ATRASO) return 'ATRASO';
-    if (diasAtraso <= DIAS_INADIMPLENCIA) return 'INADIMPLENTE';
-    return 'PERDA';
+    if (diasAtraso >= 30) return 'PERDA';
+    if (diasAtraso >= 15) return 'INADIMPLENTE';
+    if (diasAtraso >= 1) return 'ATRASO';
+    return 'EM DIA';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2b. Soft-delete guard (cascades through contract → client)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Returns `true` if a parcela (and its parent contract/client) is NOT
+ * soft-deleted. Use this to build risk buckets that must include ≥15d late
+ * installments — before applying the forecast-eligibility filter.
+ *
+ * @param parcela  Any shape with optional `deleted_at`, `contratos.deleted_at`,
+ *                 and `contratos.clientes.deleted_at` fields.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function isNotDeleted(parcela: any): boolean {
+    if (parcela.deleted_at != null) return false;
+    if (parcela.contratos) {
+        if (parcela.contratos.deleted_at != null) return false;
+        const cliente = Array.isArray(parcela.contratos.clientes)
+            ? parcela.contratos.clientes[0]
+            : parcela.contratos.clientes;
+        if (cliente && cliente.deleted_at != null) return false;
+    }
+    return true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

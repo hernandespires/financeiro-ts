@@ -2,7 +2,7 @@
 
 import { useState, useTransition, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Loader2, Check, Pencil } from 'lucide-react';
+import { X, Loader2, Check, Pencil, Eye } from 'lucide-react';
 import { editarCliente } from '@/actions/clientes';
 
 import { maskCurrency, unmaskCurrency } from '@/lib/masks';
@@ -38,6 +38,8 @@ export interface ClienteEditData {
     sdr: string | null;
     closer: string | null;
     cnpjVinculado: string | null;
+    /** Closed program (e.g. "NO LIMITS", "Programa Acelerador") — optional */
+    programaFechado: string | null;
 }
 
 interface Props {
@@ -49,16 +51,22 @@ interface Props {
 
 // ─── Modal Shell ──────────────────────────────────────────────────────────────
 
-function ModalShell({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
+function ModalShell({ onClose, isAdmin, children }: { onClose: () => void; isAdmin: boolean; children: React.ReactNode }) {
+    const headerIcon = isAdmin ? <Pencil size={16} /> : <Eye size={16} />;
+    const headerTitle = isAdmin ? 'Editar Cliente' : 'Ficha do Cliente';
+    const headerSub = isAdmin ? 'Dados cadastrais, localização e operação' : 'Informações do cliente (somente leitura)';
+
     return createPortal(
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={e => e.target === e.currentTarget && onClose()}>
             <div className="relative w-full max-w-2xl rounded-2xl bg-[#0c0c0c] border border-white/10 shadow-2xl shadow-black/70 flex flex-col max-h-[90vh]">
                 {/* Sticky header */}
                 <div className="flex items-center gap-3 px-6 py-5 border-b border-white/5 shrink-0">
-                    <span className="flex items-center justify-center w-9 h-9 rounded-xl bg-orange-500/10 text-orange-400 shrink-0"><Pencil size={16} /></span>
+                    <span className={`flex items-center justify-center w-9 h-9 rounded-xl shrink-0 ${isAdmin ? 'bg-orange-500/10 text-orange-400' : 'bg-blue-500/10 text-blue-400'}`}>
+                        {headerIcon}
+                    </span>
                     <div>
-                        <h2 className="text-base font-bold text-white">Editar Cliente</h2>
-                        <p className="text-xs text-gray-500">Dados cadastrais, localização e operação</p>
+                        <h2 className="text-base font-bold text-white">{headerTitle}</h2>
+                        <p className="text-xs text-gray-500">{headerSub}</p>
                     </div>
                     <button onClick={onClose} className="ml-auto text-gray-500 hover:text-white transition-colors"><X size={18} /></button>
                 </div>
@@ -103,7 +111,7 @@ function EditForm({ onClose, clienteData, isAdmin }: Omit<Props, 'isOpen'>) {
         sdr: clienteData.sdr ?? '',
         closer: clienteData.closer ?? '',
         cnpj_vinculado: clienteData.cnpjVinculado ?? '',
-        programa_fechado: '',
+        programa_fechado: clienteData.programaFechado ?? '',
     });
 
     const [errors, setErrorsRaw] = useState<SharedClientFormErrors>({});
@@ -125,7 +133,6 @@ function EditForm({ onClose, clienteData, isAdmin }: Omit<Props, 'isOpen'>) {
     const hasContrato = !!clienteData.contratoId;
 
     function handleSalvar() {
-        // Run the EXACT same validators as the registration page
         const e1 = validateCnpjEin(form.cnpj);
         const e2 = validatePhone(form.telefone);
         const e3 = validateAniversario(form.aniversario);
@@ -174,6 +181,7 @@ function EditForm({ onClose, clienteData, isAdmin }: Omit<Props, 'isOpen'>) {
                     sdr: form.sdr || null,
                     closer: form.closer || null,
                     cnpj_vinculado: form.cnpj_vinculado || null,
+                    programa_fechado: form.programa_fechado || null,
                 },
                 hasContrato && parsedContrato !== null ? {
                     contratoId: clienteData.contratoId!,
@@ -190,8 +198,17 @@ function EditForm({ onClose, clienteData, isAdmin }: Omit<Props, 'isOpen'>) {
     }
 
     return (
-        <ModalShell onClose={onClose}>
-            <div className="space-y-6">
+        <ModalShell onClose={onClose} isAdmin={isAdmin}>
+            {/* Non-admin notice banner */}
+            {!isAdmin && (
+                <div className="mb-5 flex items-center gap-2 rounded-xl bg-blue-500/10 border border-blue-500/20 px-4 py-3">
+                    <Eye size={14} className="text-blue-400 shrink-0" />
+                    <p className="text-xs text-blue-300">Modo de visualização — apenas administradores podem editar os dados.</p>
+                </div>
+            )}
+
+            {/* fieldset disabled={!isAdmin} natively locks all inputs for non-admins */}
+            <fieldset disabled={!isAdmin} className="space-y-6 disabled:opacity-70">
 
                 {/* ── Dados do Cliente (shared block) ── */}
                 <SectionTitle>Dados do Cliente</SectionTitle>
@@ -226,8 +243,8 @@ function EditForm({ onClose, clienteData, isAdmin }: Omit<Props, 'isOpen'>) {
                     </>
                 )}
 
-                {/* ── Financeiro (admin only + contrato linked) ── */}
-                {hasContrato && isAdmin && (
+                {/* ── Financeiro (only when contrato exists) ── */}
+                {hasContrato && (
                     <>
                         <SectionTitle>Financeiro</SectionTitle>
                         <div>
@@ -245,28 +262,32 @@ function EditForm({ onClose, clienteData, isAdmin }: Omit<Props, 'isOpen'>) {
                                     className={`${inp} pl-10 font-bold text-orange-400`}
                                 />
                             </div>
-                            <p className="mt-2 text-[10px] text-gray-600 leading-relaxed">
-                                Alterar reajustará automaticamente as parcelas em aberto.
-                            </p>
+                            {isAdmin && (
+                                <p className="mt-2 text-[10px] text-gray-600 leading-relaxed">
+                                    Alterar reajustará automaticamente as parcelas em aberto.
+                                </p>
+                            )}
                         </div>
                     </>
                 )}
+            </fieldset>
 
-                {/* Error banner */}
-                {serverError && (
-                    <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{serverError}</p>
-                )}
-            </div>
+            {/* Error banner */}
+            {serverError && (
+                <p className="mt-4 text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{serverError}</p>
+            )}
 
             {/* Footer */}
             <div className="flex gap-3 justify-end mt-8">
                 <button onClick={onClose} disabled={isPending} className="rounded-xl border border-white/10 hover:border-white/20 text-gray-400 hover:text-white px-4 py-2 text-sm font-medium transition-all disabled:opacity-50">
-                    Cancelar
+                    {isAdmin ? 'Cancelar' : 'Fechar'}
                 </button>
-                <button onClick={handleSalvar} disabled={isPending} className="inline-flex items-center gap-2 rounded-xl bg-orange-500 hover:bg-orange-400 text-black px-6 py-2.5 text-sm font-bold transition-all disabled:opacity-50">
-                    {isPending ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} strokeWidth={2.5} />}
-                    {isPending ? 'Salvando…' : 'Salvar Alterações'}
-                </button>
+                {isAdmin && (
+                    <button onClick={handleSalvar} disabled={isPending} className="inline-flex items-center gap-2 rounded-xl bg-orange-500 hover:bg-orange-400 text-black px-6 py-2.5 text-sm font-bold transition-all disabled:opacity-50">
+                        {isPending ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} strokeWidth={2.5} />}
+                        {isPending ? 'Salvando…' : 'Salvar Alterações'}
+                    </button>
+                )}
             </div>
         </ModalShell>
     );

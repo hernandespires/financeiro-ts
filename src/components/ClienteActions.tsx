@@ -2,7 +2,7 @@
 
 import { useState, useTransition, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { Pencil, Trash2, X, Loader2, AlertTriangle, RotateCcw } from "lucide-react";
+import { Pencil, Eye, Trash2, X, Loader2, AlertTriangle, RotateCcw } from "lucide-react";
 import { softDeleteCliente, restaurarCliente } from "@/actions/clientes";
 import { useRouter } from "next/navigation";
 import EditarClienteModal, { type ClienteEditData } from "@/components/EditarClienteModal";
@@ -59,7 +59,7 @@ function DeleteModal({ clienteId, nomeCliente, onClose }: {
     );
 }
 
-// ─── Restore Confirmation (inline button for deleted clients) ─────────────────
+// ─── Restore button (admin only, soft-deleted clients) ────────────────────────
 function RestaurarClienteBtn({ clienteId }: { clienteId: string }) {
     const router = useRouter();
     const [isPending, startTransition] = useTransition();
@@ -99,9 +99,16 @@ export default function ClienteActions({ isAdmin, isDeleted, ...clienteData }: C
     return (
         <>
             <div className="flex items-center gap-2">
-                {/* Editar — visible always */}
-                <button onClick={() => setIsEditOpen(true)} className="flex items-center gap-1.5 rounded-xl border border-orange-500/30 hover:border-orange-500 bg-orange-500/5 hover:bg-orange-500/10 text-orange-400 px-3 py-2 text-xs font-semibold transition-all">
-                    <Pencil size={13} /> Editar Cliente
+                {/* View/Edit button — always visible, icon adapts to role */}
+                <button
+                    onClick={() => setIsEditOpen(true)}
+                    className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition-all ${isAdmin
+                            ? "border-orange-500/30 hover:border-orange-500 bg-orange-500/5 hover:bg-orange-500/10 text-orange-400"
+                            : "border-white/20 hover:border-white/40 bg-white/5 hover:bg-white/10 text-gray-300"
+                        }`}
+                >
+                    {isAdmin ? <Pencil size={13} /> : <Eye size={13} />}
+                    {isAdmin ? "Editar Cliente" : "Ver Ficha Completa"}
                 </button>
 
                 {/* Admin + NOT deleted → Excluir */}
@@ -117,7 +124,7 @@ export default function ClienteActions({ isAdmin, isDeleted, ...clienteData }: C
                 )}
             </div>
 
-            {/* Edit modal */}
+            {/* Edit / View modal */}
             <EditarClienteModal
                 isOpen={mounted && isEditOpen}
                 onClose={() => setIsEditOpen(false)}
@@ -125,7 +132,7 @@ export default function ClienteActions({ isAdmin, isDeleted, ...clienteData }: C
                 isAdmin={isAdmin}
             />
 
-            {/* Delete confirmation modal */}
+            {/* Delete confirmation modal (admin only) */}
             {mounted && isDeleteOpen && (
                 <DeleteModal
                     clienteId={clienteData.clienteId}

@@ -7,10 +7,13 @@ import {
     CalendarDays,
     CheckCircle2,
     Clock,
+    BarChart2,
+    ChevronRight,
 } from "lucide-react";
 import { supabaseAdmin } from "@/lib/supabase";
 import { brl, fmtDate, toDateStr } from "@/lib/utils";
 import { isParcelaValidaParaPrevisao } from "@/lib/financeRules";
+import RecebimentosChart from "@/components/RecebimentosChart";
 
 export default async function PrevisaoCaixaPage({
     searchParams,
@@ -25,8 +28,10 @@ export default async function PrevisaoCaixaPage({
     const todayStr = toDateStr(today);
     const currentDate =
         params.date ??
-        `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "00")}`;
+        `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
     const [year, month] = currentDate.split("-");
+    // currentMonth is always "YYYY-MM" — used for chart grouping
+    const currentMonth = `${year}-${month}`;
 
     // ── Date range ─────────────────────────────────────────────────────────────
     let startDate: string, endDate: string, titleLabel: string;
@@ -61,14 +66,13 @@ export default async function PrevisaoCaixaPage({
     const { data: parcelasData } = await supabaseAdmin
         .from("parcelas")
         .select(
-            "id, valor_previsto, status_manual_override, data_disponibilidade_prevista, data_vencimento, deleted_at, contratos(deleted_at, forma_pagamento, clientes(nome_cliente, deleted_at))"
+            "id, valor_previsto, status_manual_override, data_disponibilidade_prevista, data_vencimento, deleted_at, contratos(forma_pagamento, deleted_at, clientes(id, nome_cliente, deleted_at))"
         )
-        .is("deleted_at", null)             // exclude soft-deleted at DB level
         .gte("data_disponibilidade_prevista", startDate)
         .lte("data_disponibilidade_prevista", endDate)
         .order("data_disponibilidade_prevista", { ascending: true });
 
-    // Apply strict forecast eligibility — also catches cascade-deleted parents
+    // A BARREIRA DE FOGO: filtra Inadimplentes, Perdas e Excluídos instantaneamente.
     const parcelas = (parcelasData ?? []).filter((p) =>
         isParcelaValidaParaPrevisao(p, todayStr)
     );
@@ -120,19 +124,11 @@ export default async function PrevisaoCaixaPage({
         )
         : parcelas;
 
-    const accordionGrouped = accordionParcelas.reduce(
-        (acc, p) => {
-            const date = p.data_disponibilidade_prevista || p.data_vencimento;
-            if (!acc[date]) acc[date] = { total: 0, items: [] };
-            acc[date].total += p.valor_previsto || 0;
-            acc[date].items.push(p);
-            return acc;
-        },
-        {} as Record<string, { total: number; items: typeof parcelas }>
+    // Daily detail — filtered by the date clicked on the chart
+    const parcelasDoDia = accordionParcelas.filter(
+        (p) => (p.data_disponibilidade_prevista || p.data_vencimento) === currentDate
     );
-
-    const accordionDates = Object.keys(accordionGrouped).sort();
-    const todayMidnight = new Date(new Date().setHours(0, 0, 0, 0));
+    const totalDoDia = parcelasDoDia.reduce((sum, p) => sum + (p.valor_previsto || 0), 0);
 
     return (
         <div className="flex flex-col gap-8 max-w-7xl mx-auto">
@@ -310,129 +306,114 @@ export default async function PrevisaoCaixaPage({
                 </div>
             )}
 
-            {/* ── Cronograma de Liberação (Accordion) ──────────────────────────────── */}
-            <div className="flex flex-col gap-6">
-                <div className="flex items-center justify-between border-b border-white/10 pb-4">
-                    <h3 className="text-xl font-black text-white flex items-center gap-2">
-                        <CalendarDays className="text-orange-500" />
-                        {selectedPlataforma
-                            ? `Cronograma Filtrado: ${selectedPlataforma}`
-                            : "Cronograma Geral de Entradas"}
-                    </h3>
-                    {selectedPlataforma && (
-                        <Link
-                            href={`?period=${periodParam}&date=${currentDate}`}
-                            scroll={false}
-                            className="text-xs text-gray-400 hover:text-white transition-colors bg-white/5 px-3 py-1.5 rounded-lg border border-white/10 hover:border-white/20"
-                        >
-                            Limpar Filtro
-                        </Link>
-                    )}
-                </div>
+            {/* ── Bar Chart (always visible — annual = 12 months, monthly = days) ── */}
+            {accordionParcelas.length > 0 && (() => {
+                const chartData = accordionParcelas.map((p) => ({
+                    data_vencimento: p.data_vencimento,
+                    data_disponibilidade_prevista: p.data_disponibilidade_prevista || p.data_vencimento,
+                    valor_previsto: p.valor_previsto || 0,
+                }));
+                return (
+                    <div className="rounded-2xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl p-6">
+                        <div className="flex items-center gap-2 mb-5">
+                            <BarChart2 size={18} className="text-orange-500" />
+                            <h2 className="text-lg font-bold text-white">
+                                {selectedPlataforma ? `Fluxo — ${selectedPlataforma}` : isAnnual ? `Fluxo Anual ${year}` : "Fluxo de Caixa"}
+                            </h2>
+                            <span className="text-xs text-gray-500 ml-1">
+                                {isAnnual ? "clique num mês para detalhar" : "por data de disponibilidade"}
+                            </span>
+                        </div>
+                        <RecebimentosChart
+                            monthlyData={chartData}
+                            dateKey="data_disponibilidade_prevista"
+                            currentMonth={currentMonth}
+                            selectedDate={currentDate}
+                            previsaoMes={accordionParcelas.reduce((s, p) => s + (p.valor_previsto || 0), 0)}
+                            isAnnual={isAnnual}
+                            year={year}
+                        />
+                    </div>
+                );
+            })()}
 
-                <div className="flex flex-col gap-3">
-                    {accordionDates.length === 0 ? (
-                        <p className="text-sm text-gray-500 text-center py-10 bg-black/40 rounded-xl border border-white/10">
-                            Nenhum recebimento previsto.
-                        </p>
+            {/* ── Bottom section: annual placeholder OR daily agenda ──────── */}
+            {isAnnual ? (
+                <div className="flex flex-col items-center justify-center py-16 text-gray-500 bg-white/[0.02] backdrop-blur-xl rounded-2xl border border-white/5 shadow-2xl mt-4">
+                    <CalendarDays size={48} className="text-orange-500/20 mb-4" />
+                    <h3 className="text-lg font-bold text-white mb-1">Visão Anual Selecionada</h3>
+                    <p className="text-sm">Clique em uma barra do gráfico acima para detalhar as transações do mês.</p>
+                </div>
+            ) : (
+                <div className="flex flex-col gap-4 mt-2">
+                    <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                        <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                            <CalendarDays className="text-orange-500" size={18} />
+                            Agenda do Dia: <span className="text-orange-400">{fmtDate(currentDate)}</span>
+                        </h3>
+                        {totalDoDia > 0 && (
+                            <span className="text-sm font-black text-green-400 bg-green-500/10 px-3 py-1 rounded-lg border border-green-500/20">
+                                {brl(totalDoDia)}
+                            </span>
+                        )}
+                    </div>
+
+                    {parcelasDoDia.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-12 text-gray-600 gap-2 bg-white/[0.02] rounded-2xl border border-white/5">
+                            <span className="text-3xl">📭</span>
+                            <span className="text-sm font-medium">Nenhum recebimento previsto para este dia.</span>
+                            <span className="text-[10px]">Clique em outra barra do gráfico.</span>
+                        </div>
                     ) : (
-                        accordionDates.map((dateStr) => {
-                            const dayData = accordionGrouped[dateStr];
-                            const dateObj = new Date(dateStr + "T12:00:00");
-                            const isPast = dateObj < todayMidnight;
+                        <div className="flex flex-col gap-2">
+                            {parcelasDoDia.map((p) => {
+                                const isPago = p.status_manual_override === "PAGO";
+                                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                const plat = (p.contratos as any)?.forma_pagamento || "NÃO DEFINIDO";
+                                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                const nome = (p.contratos as any)?.clientes?.nome_cliente || "Desconhecido";
+                                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                const clientId = (p.contratos as any)?.clientes?.id;
 
-                            return (
-                                <details
-                                    key={dateStr}
-                                    className="group flex flex-col  backdrop-blur-md rounded-xl border border-white/10 overflow-hidden [&_summary::-webkit-details-marker]:hidden"
-                                >
-                                    {/* Summary / collapsed header */}
-                                    <summary className="flex items-center justify-between px-5 py-4 cursor-pointer list-none hover:bg-white/5 transition-colors focus:outline-none">
-                                        <div className="flex items-center gap-3">
-                                            <span className="flex items-center justify-center w-6 h-6 rounded-full bg-white/5 border border-white/10 text-gray-400 group-open:rotate-180 transition-transform duration-300">
-                                                <svg
-                                                    xmlns="http://www.w3.org/2000/svg"
-                                                    width="14"
-                                                    height="14"
-                                                    viewBox="0 0 24 24"
-                                                    fill="none"
-                                                    stroke="currentColor"
-                                                    strokeWidth="2"
-                                                    strokeLinecap="round"
-                                                    strokeLinejoin="round"
-                                                >
-                                                    <path d="m6 9 6 6 6-6" />
-                                                </svg>
-                                            </span>
-                                            <span className="text-sm font-bold text-white flex items-center gap-2">
-                                                <CalendarDays
-                                                    size={14}
-                                                    className={isPast ? "text-green-500" : "text-orange-500"}
-                                                />
-                                                {fmtDate(dateStr)}
-                                                <span className="text-[10px] text-gray-500 font-normal ml-1">
-                                                    ({dateObj.toLocaleDateString("pt-BR", { weekday: "long" })})
+                                return (
+                                    <Link
+                                        key={p.id}
+                                        href={clientId ? `/cliente/${clientId}` : "#"}
+                                        className="flex flex-col sm:flex-row sm:items-center justify-between bg-white/[0.02] hover:bg-white/[0.05] rounded-xl p-4 border border-white/5 hover:border-orange-500/30 transition-all group"
+                                    >
+                                        <div className="flex flex-col gap-1.5">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-sm font-bold text-white group-hover:text-orange-400 transition-colors">
+                                                    {nome}
                                                 </span>
+                                                <span className="text-[9px] px-2 py-0.5 rounded-md bg-white/10 text-gray-300 font-bold tracking-widest uppercase">
+                                                    {plat}
+                                                </span>
+                                            </div>
+                                            <span className="text-[11px] text-gray-500">
+                                                Venceu original: {fmtDate(p.data_vencimento)}
                                             </span>
                                         </div>
-                                        <div className="flex items-center gap-4">
-                                            <span className="text-[10px] font-semibold text-gray-500">
-                                                {dayData.items.length} transaç{dayData.items.length !== 1 ? "ões" : "ão"}
-                                            </span>
-                                            <span className="text-sm font-black text-orange-400">
-                                                {brl(dayData.total)}
-                                            </span>
-                                        </div>
-                                    </summary>
 
-                                    {/* Expanded content */}
-                                    <div className="flex flex-col gap-2 p-4 pt-0 border-t border-white/5 bg-black/40">
-                                        {dayData.items.map((p) => {
-                                            const isPago = p.status_manual_override === "PAGO";
-                                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                            const plat = (p.contratos as any)?.forma_pagamento || "NÃO DEFINIDO";
-                                            return (
-                                                <div
-                                                    key={p.id}
-                                                    className="flex flex-col sm:flex-row sm:items-center justify-between bg-black/40 rounded-lg p-3 border border-white/5 hover:border-white/10 transition-colors mt-2"
-                                                >
-                                                    <div className="flex flex-col gap-1">
-                                                        <div className="flex items-center gap-2">
-                                                            <span className="text-xs font-semibold text-white">
-                                                                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                                                                {(p.contratos as any)?.clientes?.nome_cliente || "Desconhecido"}
-                                                            </span>
-                                                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/10 text-gray-300 border border-white/5 tracking-wider">
-                                                                {plat}
-                                                            </span>
-                                                        </div>
-                                                        <span className="text-[10px] text-gray-500">
-                                                            Venceu original: {fmtDate(p.data_vencimento)}
-                                                        </span>
-                                                    </div>
-                                                    <div className="flex items-center gap-3 mt-2 sm:mt-0">
-                                                        <span
-                                                            className={`text-[10px] px-2 py-0.5 rounded-md font-bold uppercase ${isPago
-                                                                ? "bg-green-500/10 text-green-400"
-                                                                : "bg-orange-500/10 text-orange-400"
-                                                                }`}
-                                                        >
-                                                            {isPago ? "Recebido" : "Pendente"}
-                                                        </span>
-                                                        <span className="text-xs font-bold text-white whitespace-nowrap">
-                                                            {brl(p.valor_previsto)}
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                </details>
-                            );
-                        })
+                                        <div className="flex items-center gap-4 mt-3 sm:mt-0">
+                                            <span className={`text-[10px] px-2.5 py-1 rounded-md font-bold uppercase ${isPago
+                                                ? "bg-green-500/10 text-green-400 border border-green-500/20"
+                                                : "bg-orange-500/10 text-orange-400 border border-orange-500/20"
+                                                }`}>
+                                                {isPago ? "Recebido" : "Pendente"}
+                                            </span>
+                                            <span className="text-base font-black text-white whitespace-nowrap">
+                                                {brl(p.valor_previsto)}
+                                            </span>
+                                            <ChevronRight size={16} className="text-gray-600 group-hover:text-orange-500 transition-colors" />
+                                        </div>
+                                    </Link>
+                                );
+                            })}
+                        </div>
                     )}
                 </div>
-            </div>
+            )}
 
         </div>
     );

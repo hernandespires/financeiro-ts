@@ -105,6 +105,7 @@ export async function editarCliente(
         sdr?: string | null;
         closer?: string | null;
         cnpj_vinculado?: string | null;
+        programa_fechado?: string | null;
     },
     contratoData?: {
         contratoId: string;
@@ -160,7 +161,7 @@ export async function editarCliente(
         if (updateErr) return { ok: false, error: updateErr.message };
 
         // ── Optional: update operational contrato fields ─────────────────────────
-        if (contratoData?.contratoId && (data.agencia !== undefined || data.sdr !== undefined || data.closer !== undefined)) {
+        if (contratoData?.contratoId && (data.agencia !== undefined || data.sdr !== undefined || data.closer !== undefined || data.programa_fechado !== undefined)) {
             const agenciaRow = data.agencia
                 ? (await supabaseAdmin.from('dim_agencias').select('id').eq('nome', data.agencia).maybeSingle()).data
                 : null;
@@ -170,17 +171,22 @@ export async function editarCliente(
             const closerRow = data.closer
                 ? (await supabaseAdmin.from('dim_equipe').select('id').eq('nome', data.closer).maybeSingle()).data
                 : null;
+            const programaRow = data.programa_fechado
+                ? (await supabaseAdmin.from('dim_programas').select('id').eq('nome', data.programa_fechado).maybeSingle()).data
+                : null;
 
             const ct: Record<string, any> = {};
             if (agenciaRow !== undefined) ct.agencia_id = agenciaRow?.id ?? null;
             if (sdrRow !== undefined) ct.sdr_id = sdrRow?.id ?? null;
             if (closerRow !== undefined) ct.closer_id = closerRow?.id ?? null;
+            if (programaRow !== undefined) ct.programa_id = programaRow?.id ?? null;
             if (Object.keys(ct).length > 0)
                 await supabaseAdmin.from('contratos').update(ct).eq('id', contratoData.contratoId);
 
             if (data.agencia !== undefined) mudancas.push(`Agência: '${data.agencia ?? '—'}'`);
             if (data.sdr !== undefined) mudancas.push(`SDR: '${data.sdr ?? '—'}'`);
             if (data.closer !== undefined) mudancas.push(`Closer: '${data.closer ?? '—'}'`);
+            if (data.programa_fechado !== undefined) mudancas.push(`Programa: '${data.programa_fechado ?? '—'}'`);
         }
 
         // ── Audit log with full JSON snapshots ──────────────────────────────────

@@ -94,6 +94,7 @@ export default async function ClienteDetailPage({
                    id, tipo_contrato, valor_total_contrato, parcelas_total, periodicidade, forma_pagamento,
                    cnpj_vinculado,
                    dim_agencias(nome), dim_equipe_sdr:dim_equipe!sdr_id(nome), dim_equipe_closer:dim_equipe!closer_id(nome),
+                   dim_programas:dim_programas!programa_id(nome),
                    parcelas(id, data_vencimento, valor_previsto, status_manual_override, observacao, tipo_parcela, numero_referencia, sub_indice, deleted_at, pagamentos(data_pagamento))
                  )`
             )
@@ -156,9 +157,10 @@ export default async function ClienteDetailPage({
             periodicidade: string | null;
             cnpj_vinculado: string | null;
             // Supabase returns FK joins as arrays
-            dim_agencias: { nome: string }[] | null;
-            dim_equipe_sdr: { nome: string }[] | null;
-            dim_equipe_closer: { nome: string }[] | null;
+            dim_agencias: { nome: string }[] | { nome: string } | null;
+            dim_equipe_sdr: { nome: string }[] | { nome: string } | null;
+            dim_equipe_closer: { nome: string }[] | { nome: string } | null;
+            dim_programas: { nome: string }[] | { nome: string } | null;
             parcelas: {
                 id: string;
                 data_vencimento: string;
@@ -176,6 +178,18 @@ export default async function ClienteDetailPage({
 
     const contratos = cliente.contratos ?? [];
     const primeiroContrato = contratos[0] ?? null;
+
+    // Safe extractor for Supabase FK joins (may return array or object)
+    const extractName = (obj: any): string | null => {
+        if (!obj) return null;
+        if (Array.isArray(obj)) return (obj[0] as any)?.nome ?? null;
+        return (obj as any).nome ?? null;
+    };
+
+    const agencia = extractName(primeiroContrato?.dim_agencias);
+    const sdr = extractName(primeiroContrato?.dim_equipe_sdr);
+    const closer = extractName(primeiroContrato?.dim_equipe_closer);
+    const programaFechado = extractName(primeiroContrato?.dim_programas);
 
     // ── Cross-default risk ────────────────────────────────────────────────────
     const openParcelas = contratos.flatMap((ct) =>
@@ -286,10 +300,11 @@ export default async function ClienteDetailPage({
                     link_asana={cliente.link_asana}
                     contratoId={primeiroContrato?.id ?? null}
                     valorTotalContrato={primeiroContrato?.valor_total_contrato ?? null}
-                    agencia={primeiroContrato?.dim_agencias?.[0]?.nome ?? null}
-                    sdr={primeiroContrato?.dim_equipe_sdr?.[0]?.nome ?? null}
-                    closer={primeiroContrato?.dim_equipe_closer?.[0]?.nome ?? null}
+                    agencia={agencia}
+                    sdr={sdr}
+                    closer={closer}
                     cnpjVinculado={primeiroContrato?.cnpj_vinculado ?? null}
+                    programaFechado={programaFechado}
                     isDeleted={!!cliente.deleted_at}
                 />
             </div>

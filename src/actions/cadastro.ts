@@ -175,21 +175,7 @@ export async function cadastrarClienteCompleto(dados: DadosCadastroCompleto) {
                 else dataVenc.setMonth(dataVenc.getMonth() + 1);
             }
 
-            // Parcela "Despertador" pro fim do contrato
-            const dataFimContrato = new Date(`${dados.data_inicio}T12:00:00Z`);
-            dataFimContrato.setMonth(dataFimContrato.getMonth() + mesesSeguros);
-
-            parcelasParaInserir.push({
-                contrato_id: contrato.id,
-                numero_referencia: quantidadeComValor + 1,
-                sub_indice: 0,
-                data_vencimento: dataFimContrato.toISOString().split('T')[0],
-                valor_previsto: 0, // Zero Reais
-                tipo_parcela: 'ADICIONAL',
-                categoria: 'À VISTA',
-                status_manual_override: 'RENOVAR CONTRATO',
-                observacao: `Término do contrato de ${mesesSeguros} meses`
-            });
+            // A_VISTA renewal marker is now added universally below
 
         } else {
             // LÓGICA UNIVERSAL (RECORRENTE, PONTUAL E ANTIGO) -> HISTÓRICO COMPLETO
@@ -230,6 +216,23 @@ export async function cadastrarClienteCompleto(dados: DadosCadastroCompleto) {
                 else dataVenc.setMonth(dataVenc.getMonth() + 1);
             }
         }
+
+        // ── Universal "Despertador" (Renewal marker) ─────────────────────────────
+        // Appended for ALL contract types so every contract has a renewal/end signal.
+        const dataFimContrato = new Date(`${dados.data_inicio}T12:00:00Z`);
+        dataFimContrato.setMonth(dataFimContrato.getMonth() + mesesSeguros);
+
+        parcelasParaInserir.push({
+            contrato_id: contrato.id,
+            numero_referencia: parcelasParaInserir.length + 1,
+            sub_indice: 0,
+            data_vencimento: dataFimContrato.toISOString().split('T')[0],
+            valor_previsto: 0,
+            tipo_parcela: 'ADICIONAL',
+            categoria: 'RENOVAÇÕES',
+            status_manual_override: 'RENOVAR CONTRATO',
+            observacao: 'Término do contrato',
+        });
 
         const { error: erroParcelas } = await supabaseAdmin
             .from('parcelas')

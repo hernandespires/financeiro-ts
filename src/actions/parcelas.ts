@@ -22,7 +22,10 @@ export interface ActionResult {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. REGISTRAR PAGAMENTO COMPLETO
-//    Marks a parcela as PAGO and records a ledger entry in `pagamentos`.
+//    Marks a parcela as PAGO, records a ledger entry in `pagamentos`, and
+//    triggers a "Ripple Effect" when the payment platform differs from the
+//    contract's default: it updates the contract and recalculates the
+//    data_disponibilidade_prevista for ALL open (NORMAL) parcelas.
 // ─────────────────────────────────────────────────────────────────────────────
 export async function registrarPagamentoCompleto(
     parcelaId: string,
@@ -31,57 +34,115 @@ export async function registrarPagamentoCompleto(
     plataforma: string,       // e.g. "PIX", "IUGU", "STRIPE BRASIL", "STRIPE EUA"
     observacao?: string
 ): Promise<ActionResult> {
-    // Step 1: mark parcela as PAGO
-    const { error: updateError } = await supabaseAdmin
-        .from("parcelas")
-        .update({ status_manual_override: "PAGO" as any, observacao: observacao || null })
-        .eq("id", parcelaId);
+    try {
+        // ── Step 1: Fetch context — need numero_referencia, contrato and client ──
+        const { data: parcela, error: fetchErr } = await supabaseAdmin
+            .from('parcelas')
+            .select('numero_referencia, sub_indice, contrato_id, contratos(cliente_id, forma_pagamento)')
+            .eq('id', parcelaId)
+            .single();
 
-    if (updateError) {
-        console.error("[registrarPagamentoCompleto] Erro ao atualizar parcela:", updateError.message);
-        return { ok: false, error: updateError.message };
+        if (fetchErr || !parcela) {
+            return { ok: false, error: fetchErr?.message ?? 'Parcela não encontrada.' };
+        }
+
+        const contratoData = parcela.contratos as any;
+        const clienteId: string | null = contratoData?.cliente_id ?? null;
+        const contratoId: string | null = parcela.contrato_id ?? null;
+        const formaAnterior: string = contratoData?.forma_pagamento ?? '';
+        const ref = parcela.sub_indice
+            ? `${parcela.numero_referencia}-${parcela.sub_indice}`
+            : `${parcela.numero_referencia}`;
+
+        const brlFmt = (v: number) =>
+            new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+
+        // ── Step 2: Calculate real clearing date for THIS payment ─────────────────
+        const disponivelEmReal = calcularDataDisponibilidade(dataPagamento, plataforma);
+
+        // ── Step 3: Mark parcela as PAGO + fix its availability date ─────────────
+        const { error: updateError } = await supabaseAdmin
+            .from('parcelas')
+            .update({
+                status_manual_override: 'PAGO' as any,
+                observacao: observacao || null,
+                data_disponibilidade_prevista: disponivelEmReal,
+            })
+            .eq('id', parcelaId);
+
+        if (updateError) {
+            console.error('[registrarPagamentoCompleto] Erro ao atualizar parcela:', updateError.message);
+            return { ok: false, error: updateError.message };
+        }
+
+        // ── Step 4: Insert ledger entry with correct disponivel_em ────────────────
+        const { error: insertError } = await supabaseAdmin
+            .from('pagamentos')
+            .insert({
+                parcela_id: parcelaId,
+                data_pagamento: dataPagamento,
+                disponivel_em: disponivelEmReal,
+                valor_pago: valorPago,
+                plataforma: plataforma as any,
+                status_pagamento: 'RECEBIDO' as any,
+            });
+
+        if (insertError) {
+            console.error('[registrarPagamentoCompleto] Erro ao inserir pagamento:', insertError.message);
+            return {
+                ok: false,
+                error: `Parcela marcada como PAGO, mas falha ao gravar histórico: ${insertError.message}`,
+            };
+        }
+
+        // ── Step 5: RIPPLE EFFECT — platform changed → update contract + open parcelas
+        let rippleNote = '';
+        if (contratoId && plataforma && plataforma !== formaAnterior) {
+            // 5a) Update the contract's default payment method
+            await supabaseAdmin
+                .from('contratos')
+                .update({ forma_pagamento: plataforma as any })
+                .eq('id', contratoId);
+
+            // 5b) Fetch all open (NORMAL) sibling parcelas
+            const { data: openParcelas } = await supabaseAdmin
+                .from('parcelas')
+                .select('id, data_vencimento')
+                .eq('contrato_id', contratoId)
+                .eq('status_manual_override', 'NORMAL')
+                .is('deleted_at', null);
+
+            // 5c) Recalculate and cascade availability dates in parallel
+            if (openParcelas && openParcelas.length > 0) {
+                await Promise.all(
+                    openParcelas.map((p) => {
+                        const novaDisp = calcularDataDisponibilidade(p.data_vencimento, plataforma);
+                        return supabaseAdmin
+                            .from('parcelas')
+                            .update({ data_disponibilidade_prevista: novaDisp })
+                            .eq('id', p.id);
+                    })
+                );
+            }
+
+            rippleNote = ` | Alterou contrato de ${formaAnterior || '—'} para ${plataforma} e recalculou ${openParcelas?.length ?? 0} parcela(s) em aberto.`;
+        }
+
+        // ── Step 6: Audit log ─────────────────────────────────────────────────────
+        const logMsg = `Deu baixa na parcela ${ref} — ${brlFmt(valorPago)} via ${plataforma}${rippleNote}`;
+        if (clienteId) {
+            await registrarLog(clienteId, 'PARCELAS', logMsg);
+        }
+
+        revalidateAll(clienteId ?? undefined);
+        return { ok: true };
+
+    } catch (err: any) {
+        console.error('[registrarPagamentoCompleto] Exceção:', err);
+        return { ok: false, error: err.message || 'Erro desconhecido.' };
     }
-
-    // Step 2: insert ledger entry into `pagamentos`
-    const { error: insertError } = await supabaseAdmin
-        .from("pagamentos")
-        .insert({
-            parcela_id: parcelaId,
-            data_pagamento: dataPagamento,
-            disponivel_em: dataPagamento,
-            valor_pago: valorPago,
-            plataforma: plataforma as any,     // cast: enum_plataforma
-            status_pagamento: "RECEBIDO" as any,     // cast: enum_status_pagamento
-        });
-
-    if (insertError) {
-        console.error("[registrarPagamentoCompleto] Erro ao inserir pagamento:", insertError.message);
-        // Parcela already marked PAGO — surface the error but don't roll back
-        return { ok: false, error: `Parcela marcada como PAGO, mas falha ao gravar histórico: ${insertError.message}` };
-    }
-
-    // Step 3: log the action against the client's CRM tab
-    const { data: pData } = await supabaseAdmin
-        .from('parcelas')
-        .select('numero_referencia, contratos(cliente_id)')
-        .eq('id', parcelaId)
-        .single();
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const clienteId = (pData?.contratos as any)?.cliente_id;
-    const numero_referencia = pData?.numero_referencia ?? parcelaId;
-
-    if (clienteId) {
-        await registrarLog(
-            clienteId,
-            'PARCELAS',
-            `Deu baixa na parcela ${numero_referencia} — Valor: R$ ${valorPago.toFixed(2)} via ${plataforma}`
-        );
-    }
-
-    revalidateAll();
-    return { ok: true };
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 2. DESMEMBRAR PARCELA
@@ -444,6 +505,59 @@ export async function restaurarParcela(id: string): Promise<ActionResult> {
 
     } catch (err: any) {
         console.error('[restaurarParcela] Exceção:', err);
+        return { ok: false, error: err.message || 'Erro desconhecido.' };
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8. EDITAR STATUS DE PARCELA
+//    Updates status_manual_override to any valid value (e.g. 'FINALIZAR PROJETO').
+//    Used by NaoRenovarModal to register churn on a RENOVAR CONTRATO installment.
+// ─────────────────────────────────────────────────────────────────────────────
+export async function editarParcelaStatus(
+    parcelaId: string,
+    novoStatus: string
+): Promise<ActionResult> {
+    try {
+        // Fetch context to build log message
+        const { data: old, error: fetchErr } = await supabaseAdmin
+            .from('parcelas')
+            .select('numero_referencia, sub_indice, status_manual_override, contrato_id, contratos(cliente_id)')
+            .eq('id', parcelaId)
+            .single();
+
+        if (fetchErr || !old) {
+            return { ok: false, error: fetchErr?.message ?? 'Parcela não encontrada.' };
+        }
+
+        const { error: updateErr } = await supabaseAdmin
+            .from('parcelas')
+            .update({ status_manual_override: novoStatus as any })
+            .eq('id', parcelaId);
+
+        if (updateErr) {
+            return { ok: false, error: updateErr.message };
+        }
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const clienteId: string | null = (old.contratos as any)?.cliente_id ?? null;
+        const ref = old.sub_indice
+            ? `${old.numero_referencia}-${old.sub_indice}`
+            : `${old.numero_referencia}`;
+
+        if (clienteId) {
+            await registrarLog(
+                clienteId,
+                'PARCELAS',
+                `Alterou status da parcela ${ref} de '${old.status_manual_override}' para '${novoStatus}'.`
+            );
+        }
+
+        revalidateAll(clienteId ?? undefined);
+        return { ok: true };
+
+    } catch (err: any) {
+        console.error('[editarParcelaStatus] Exceção:', err);
         return { ok: false, error: err.message || 'Erro desconhecido.' };
     }
 }
