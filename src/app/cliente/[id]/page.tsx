@@ -10,6 +10,7 @@ import RiskBadge, { riskConfig, RiskStatus } from "@/components/RiskBadge";
 import ClienteActions from "@/components/ClienteActions";
 import RestaurarParcelaBtn from "@/components/RestaurarParcelaBtn";
 import { brl, toDateStr, daysLate, fmtDate } from "@/lib/utils";
+import { getRiskStatus } from "@/lib/financeRules";
 
 
 // ─── Parcel status badge ──────────────────────────────────────────────────────
@@ -201,10 +202,8 @@ export default async function ClienteDetailPage({
         const maxLate = Math.max(
             ...openParcelas.map((p) => daysLate(p.data_vencimento, todayStr))
         );
-        if (maxLate > 30) riskStatus = "PERDA";
-        else if (maxLate >= 15) riskStatus = "INADIMPLENTE";
-        else if (maxLate >= 1) riskStatus = "ATRASO";
-        else riskStatus = "EM DIA";
+        // Use central brain — matches financeRules thresholds exactly
+        riskStatus = getRiskStatus(maxLate) as RiskStatus;
     }
 
 
@@ -576,6 +575,8 @@ export default async function ClienteDetailPage({
                                                             observacao: p.observacao,
                                                             data_vencimento: p.data_vencimento,
                                                             hasPagamento: p.hasPagamento,
+                                                            contrato_id: p.contratoId,
+                                                            cliente_id: cliente.id,
                                                         }} />
                                                     )}
                                                 </td>

@@ -62,26 +62,33 @@ export default async function PrevisaoCaixaPage({
     const nextNav = isAnnual ? nextYearStr : nextMonthStr;
     const periodParam = isAnnual ? "annual" : "monthly";
 
-    // ── Fetch parcelas — ALL NORMAL (for cross-default detection) + date-range ───
+    // ── 1. Global scan — lightweight fetch to identify dirty contracts ──────────
+    // Fetches ALL open/defaulting parcelas (no date filter) so getContratosSujos
+    // can flag contracts with ANY overdue installment ≥15d, even outside the
+    // current view window. This is the contagion source of truth.
+    const { data: openData } = await supabaseAdmin
+        .from("parcelas")
+        .select(
+            "contrato_id, data_vencimento, status_manual_override, deleted_at, contratos(deleted_at, clientes(deleted_at))"
+        )
+        .in("status_manual_override", ["NORMAL", "INADIMPLENTE", "PERDA DE FATURAMENTO"]);
+
+    const contratosSujos = getContratosSujos(openData ?? [], todayStr);
+
+    // ── 2. Date-range fetch for display ────────────────────────────────────────
     const { data: parcelasData } = await supabaseAdmin
         .from("parcelas")
         .select(
             "id, valor_previsto, status_manual_override, data_disponibilidade_prevista, data_vencimento, contrato_id, deleted_at, contratos(forma_pagamento, deleted_at, clientes(id, nome_cliente, deleted_at))"
         )
-        .or(`status_manual_override.eq.NORMAL,and(data_disponibilidade_prevista.gte.${startDate},data_disponibilidade_prevista.lte.${endDate})`)
+        .gte("data_disponibilidade_prevista", startDate)
+        .lte("data_disponibilidade_prevista", endDate)
         .order("data_disponibilidade_prevista", { ascending: true });
 
-    const rawParcelas = parcelasData ?? [];
-
-    // Pass 1: identify contracts contaminated by ≥15d overdue installments
-    const contratosSujos = getContratosSujos(rawParcelas, todayStr);
-
-    // Pass 2: strict eligibility (cross-default contagion) then date-range guard
-    const parcelas = rawParcelas.filter((p) => {
-        if (!isParcelaValidaParaPrevisao(p, todayStr, contratosSujos)) return false;
-        const d = p.data_disponibilidade_prevista || p.data_vencimento;
-        return d >= startDate && d <= endDate;
-    });
+    // ── 3. ABSOLUTE FIREWALL ────────────────────────────────────────────────────
+    const parcelas = (parcelasData ?? []).filter((p) =>
+        isParcelaValidaParaPrevisao(p, todayStr, contratosSujos)
+    );
 
     // ── Aggregate KPIs & per-platform buckets ─────────────────────────────────
     let totalCaixa = 0;

@@ -30,7 +30,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-cover bg-center bg-no-repeat bg-fixed min-h-screen text-white`}
         style={{
           backgroundImage: "url('/wallpaper.png')",
-          backgroundColor: "#111111" // Cor de segurança caso a imagem demore 1 segundo para carregar
+          backgroundColor: "#000000ff" // Cor de segurança caso a imagem demore 1 segundo para carregar
         }}
       >
         {/* Floating Header */}

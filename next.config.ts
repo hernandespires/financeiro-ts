@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Standalone output for Docker — copies only necessary files into .next/standalone
+  output: "standalone",
+
   // 1. Desativa source maps em produção (previne engenharia reversa do frontend)
   productionBrowserSourceMaps: false,
 

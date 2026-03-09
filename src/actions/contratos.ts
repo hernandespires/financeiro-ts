@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { supabaseAdmin } from '@/lib/supabase';
 import { registrarLog } from '@/lib/logger';
+import { requireAuth } from '@/lib/authGuard';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 export interface ActionResult {
@@ -31,6 +32,7 @@ export async function editarValorContrato(
     novoValorTotal: number
 ): Promise<ActionResult> {
     try {
+        await requireAuth();
         // 1. Input sanity — prevent NaN from ever reaching the database
         if (!isFinite(novoValorTotal) || isNaN(novoValorTotal) || novoValorTotal <= 0) {
             return { ok: false, error: 'Valor total inválido. Informe um número positivo.' };

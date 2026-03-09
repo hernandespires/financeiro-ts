@@ -1,9 +1,11 @@
 "use client";
 
 import { useState, useTransition, useEffect } from "react";
-import { createPortal } from "react-dom";
-import { Check, GitBranch, Loader2, X, CreditCard, Scissors, Pencil, Trash2, AlertTriangle, RefreshCw, XCircle } from "lucide-react";
+import { Check, GitBranch, CreditCard, Scissors, Pencil, Trash2, AlertTriangle, RefreshCw, XCircle } from "lucide-react";
 import { registrarPagamentoCompleto, desmembrarParcela, editarParcela, softDeleteParcela } from "@/actions/parcelas";
+import { renovarContrato } from "@/actions/renovacao";
+import Button from "@/components/ui/Button";
+import Modal from "@/components/ui/Modal";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface ParcelaForActions {
@@ -16,6 +18,9 @@ export interface ParcelaForActions {
     observacao?: string | null;
     data_vencimento?: string;
     hasPagamento?: boolean; // true = already paid in pagamentos table, hides edit/delete
+    /** Needed for the renewal flow to create a new contract on the same client */
+    contrato_id?: string | null;
+    cliente_id?: string | null;
 }
 
 interface ParcelaActionsProps {
@@ -28,32 +33,21 @@ const brl = (v: number) =>
 
 const todayISO = () => new Date().toISOString().split("T")[0];
 
-// ─── Shared Modal Shell ───────────────────────────────────────────────────────
-function Modal({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
-    return createPortal(
-        <div
-            className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
-            onClick={(e) => e.target === e.currentTarget && onClose()}
-        >
-            <div className="relative w-full max-w-md rounded-2xl bg-[#111] border border-white/10 shadow-2xl shadow-black/60 p-6 flex flex-col gap-6">
-                <button
-                    onClick={onClose}
-                    className="absolute top-4 right-4 text-gray-500 hover:text-white transition-colors"
-                >
-                    <X size={18} />
-                </button>
-                {children}
-            </div>
-        </div>,
-        document.body
-    );
-}
-
 // ─── Shared Input styles ──────────────────────────────────────────────────────
 const inputCls =
     "w-full rounded-xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-orange-500 transition-colors";
 
 const labelCls = "text-[11px] font-semibold text-gray-400 uppercase tracking-widest";
+
+// ─── Error message helper ─────────────────────────────────────────────────────
+function ErrorMsg({ msg }: { msg: string | null }) {
+    if (!msg) return null;
+    return (
+        <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+            {msg}
+        </p>
+    );
+}
 
 // ─── Payment Modal ────────────────────────────────────────────────────────────
 function PaymentModal({
@@ -75,67 +69,38 @@ function PaymentModal({
     function handleSalvar() {
         setError(null);
         const val = parseFloat(valorPago);
-        if (isNaN(val) || val <= 0) {
-            setError("Informe um valor válido.");
-            return;
-        }
+        if (isNaN(val) || val <= 0) { setError("Informe um valor válido."); return; }
         startTransition(async () => {
             const res = await registrarPagamentoCompleto(parcela.id, val, dataPagamento, plataforma, observacao || undefined);
-            if (res.ok) {
-                onSuccess();
-                onClose();
-            } else {
-                setError(res.error ?? "Erro desconhecido.");
-            }
+            if (res.ok) { onSuccess(); onClose(); }
+            else setError(res.error ?? "Erro desconhecido.");
         });
     }
 
     return (
-        <Modal onClose={onClose}>
-            {/* Header */}
-            <div className="flex items-center gap-3">
-                <span className="flex items-center justify-center w-9 h-9 rounded-xl bg-green-500/10 text-green-400 shrink-0">
-                    <CreditCard size={18} />
-                </span>
-                <div>
-                    <h2 className="text-base font-bold text-white">Registrar Pagamento</h2>
-                    <p className="text-xs text-gray-500">
-                        Valor previsto: {brl(parcela.valor_previsto)}
-                    </p>
-                </div>
-            </div>
-
-            {/* Fields */}
+        <Modal
+            onClose={onClose}
+            title="Registrar Pagamento"
+            subtitle={`Valor previsto: ${brl(parcela.valor_previsto)}`}
+            icon={<CreditCard size={18} className="text-green-400" />}
+        >
             <div className="flex flex-col gap-4">
                 <div className="flex flex-col gap-1.5">
                     <label className={labelCls}>Valor Pago (R$)</label>
-                    <input
-                        type="number"
-                        min="0.01"
-                        step="0.01"
-                        value={valorPago}
-                        onChange={(e) => setValorPago(e.target.value)}
-                        className={inputCls}
-                    />
+                    <input type="number" min="0.01" step="0.01" value={valorPago}
+                        onChange={(e) => setValorPago(e.target.value)} className={inputCls} />
                 </div>
 
                 <div className="flex flex-col gap-1.5">
                     <label className={labelCls}>Data do Pagamento</label>
-                    <input
-                        type="date"
-                        value={dataPagamento}
-                        onChange={(e) => setDataPagamento(e.target.value)}
-                        className={inputCls}
-                    />
+                    <input type="date" value={dataPagamento}
+                        onChange={(e) => setDataPagamento(e.target.value)} className={inputCls} />
                 </div>
 
                 <div className="flex flex-col gap-1.5">
                     <label className={labelCls}>Plataforma</label>
-                    <select
-                        value={plataforma}
-                        onChange={(e) => setPlataforma(e.target.value)}
-                        className={inputCls + " cursor-pointer"}
-                    >
+                    <select value={plataforma} onChange={(e) => setPlataforma(e.target.value)}
+                        className={inputCls + " cursor-pointer"}>
                         <option value="STRIPE BRASIL" className="bg-[#111] text-white">STRIPE BRASIL</option>
                         <option value="STRIPE EUA" className="bg-[#111] text-white">STRIPE EUA</option>
                         <option value="IUGU" className="bg-[#111] text-white">IUGU</option>
@@ -148,38 +113,19 @@ function PaymentModal({
 
                 <div className="flex flex-col gap-1.5">
                     <label className={labelCls}>Observações (Opcional)</label>
-                    <textarea
-                        value={observacao}
-                        onChange={(e) => setObservacao(e.target.value)}
+                    <textarea value={observacao} onChange={(e) => setObservacao(e.target.value)}
                         placeholder="Ex: Atrasou por problema no cartão..."
-                        className={inputCls + " resize-none h-20"}
-                    />
+                        className={inputCls + " resize-none h-20"} />
                 </div>
 
-                {error && (
-                    <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-                        {error}
-                    </p>
-                )}
+                <ErrorMsg msg={error} />
             </div>
 
-            {/* Actions */}
             <div className="flex gap-3 justify-end">
-                <button
-                    onClick={onClose}
-                    disabled={isPending}
-                    className="rounded-xl border border-white/10 hover:border-white/20 text-gray-400 hover:text-white px-4 py-2 text-sm font-medium transition-all disabled:opacity-50"
-                >
-                    Cancelar
-                </button>
-                <button
-                    onClick={handleSalvar}
-                    disabled={isPending}
-                    className="inline-flex items-center gap-2 rounded-xl bg-green-500 hover:bg-green-400 active:bg-green-600 text-black px-5 py-2 text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                    {isPending ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} strokeWidth={2.5} />}
+                <Button variant="outline" onClick={onClose} disabled={isPending}>Cancelar</Button>
+                <Button variant="success" onClick={handleSalvar} isLoading={isPending} icon={<Check size={14} strokeWidth={2.5} />}>
                     {isPending ? "Salvando…" : "Confirmar"}
-                </button>
+                </Button>
             </div>
         </Modal>
     );
@@ -205,60 +151,34 @@ function SplitModal({
 
     function handleDividir() {
         setError(null);
-        if (!saldoValido) {
-            setError("O novo valor deve ser maior que zero e menor que o valor original.");
-            return;
-        }
+        if (!saldoValido) { setError("O novo valor deve ser maior que zero e menor que o valor original."); return; }
         startTransition(async () => {
             const res = await desmembrarParcela(parcela.id, novoValorNum);
-            if (res.ok) {
-                onSuccess();
-                onClose();
-            } else {
-                setError(res.error ?? "Erro desconhecido.");
-            }
+            if (res.ok) { onSuccess(); onClose(); }
+            else setError(res.error ?? "Erro desconhecido.");
         });
     }
 
     return (
-        <Modal onClose={onClose}>
-            {/* Header */}
-            <div className="flex items-center gap-3">
-                <span className="flex items-center justify-center w-9 h-9 rounded-xl bg-orange-500/10 text-orange-400 shrink-0">
-                    <Scissors size={18} />
-                </span>
-                <div>
-                    <h2 className="text-base font-bold text-white">Desmembrar Parcela</h2>
-                    <p className="text-xs text-gray-500">
-                        Valor original: {brl(parcela.valor_previsto)}
-                    </p>
-                </div>
-            </div>
-
-            {/* Field */}
+        <Modal
+            onClose={onClose}
+            title="Desmembrar Parcela"
+            subtitle={`Valor original: ${brl(parcela.valor_previsto)}`}
+            icon={<Scissors size={18} className="text-orange-400" />}
+        >
             <div className="flex flex-col gap-4">
                 <div className="flex flex-col gap-1.5">
                     <label className={labelCls}>Novo valor desta parcela (R$)</label>
-                    <input
-                        type="number"
-                        min="0.01"
-                        step="0.01"
-                        max={parcela.valor_previsto - 0.01}
-                        value={novoValor}
-                        onChange={(e) => setNovoValor(e.target.value)}
+                    <input type="number" min="0.01" step="0.01" max={parcela.valor_previsto - 0.01}
+                        value={novoValor} onChange={(e) => setNovoValor(e.target.value)}
                         placeholder={`Máx. ${brl(parcela.valor_previsto - 0.01)}`}
-                        className={inputCls}
-                        autoFocus
-                    />
+                        className={inputCls} autoFocus />
                 </div>
 
                 {/* Live preview */}
-                <div
-                    className={`rounded-xl border p-3 text-xs leading-relaxed transition-all ${saldoValido
-                        ? "bg-orange-500/5 border-orange-500/20 text-orange-300"
-                        : "bg-white/3 border-white/5 text-gray-600"
-                        }`}
-                >
+                <div className={`rounded-xl border p-3 text-xs leading-relaxed transition-all ${saldoValido
+                    ? "bg-orange-500/5 border-orange-500/20 text-orange-300"
+                    : "bg-white/3 border-white/5 text-gray-600"}`}>
                     {saldoValido ? (
                         <>
                             ✂️ Esta parcela ficará com <strong className="text-white">{brl(novoValorNum)}</strong>
@@ -271,30 +191,16 @@ function SplitModal({
                     )}
                 </div>
 
-                {error && (
-                    <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-                        {error}
-                    </p>
-                )}
+                <ErrorMsg msg={error} />
             </div>
 
-            {/* Actions */}
             <div className="flex gap-3 justify-end">
-                <button
-                    onClick={onClose}
-                    disabled={isPending}
-                    className="rounded-xl border border-white/10 hover:border-white/20 text-gray-400 hover:text-white px-4 py-2 text-sm font-medium transition-all disabled:opacity-50"
-                >
-                    Cancelar
-                </button>
-                <button
-                    onClick={handleDividir}
+                <Button variant="outline" onClick={onClose} disabled={isPending}>Cancelar</Button>
+                <Button variant="primary" onClick={handleDividir} isLoading={isPending}
                     disabled={isPending || !saldoValido}
-                    className="inline-flex items-center gap-2 rounded-xl bg-orange-500 hover:bg-orange-400 active:bg-orange-600 text-black px-5 py-2 text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                    {isPending ? <Loader2 size={14} className="animate-spin" /> : <GitBranch size={14} strokeWidth={2} />}
+                    icon={<GitBranch size={14} strokeWidth={2} />}>
                     {isPending ? "Dividindo…" : "Dividir"}
-                </button>
+                </Button>
             </div>
         </Modal>
     );
@@ -320,44 +226,37 @@ function EditParcelaModal({
         if (!dataVenc) { setError("Informe a data de vencimento."); return; }
         startTransition(async () => {
             const res = await editarParcela(parcela.id, val, dataVenc);
-            if (res.ok) {
-                onClose();
-            } else {
-                setError(res.error ?? "Erro desconhecido.");
-            }
+            if (res.ok) onClose();
+            else setError(res.error ?? "Erro desconhecido.");
         });
     }
 
     return (
-        <Modal onClose={onClose}>
-            <div className="flex items-center gap-3">
-                <span className="flex items-center justify-center w-9 h-9 rounded-xl bg-blue-500/10 text-blue-400 shrink-0">
-                    <Pencil size={16} />
-                </span>
-                <div>
-                    <h2 className="text-base font-bold text-white">Editar Parcela</h2>
-                    <p className="text-xs text-gray-500">Reajuste valor ou data de vencimento</p>
-                </div>
-            </div>
-
+        <Modal
+            onClose={onClose}
+            title="Editar Parcela"
+            subtitle="Reajuste valor ou data de vencimento"
+            icon={<Pencil size={16} className="text-blue-400" />}
+        >
             <div className="flex flex-col gap-4">
                 <div className="flex flex-col gap-1.5">
                     <label className={labelCls}>Novo Valor (R$)</label>
-                    <input type="number" min="0.01" step="0.01" value={valor} onChange={e => setValor(e.target.value)} className={inputCls} />
+                    <input type="number" min="0.01" step="0.01" value={valor}
+                        onChange={(e) => setValor(e.target.value)} className={inputCls} />
                 </div>
                 <div className="flex flex-col gap-1.5">
                     <label className={labelCls}>Nova Data de Vencimento</label>
-                    <input type="date" value={dataVenc} onChange={e => setDataVenc(e.target.value)} className={inputCls} />
+                    <input type="date" value={dataVenc}
+                        onChange={(e) => setDataVenc(e.target.value)} className={inputCls} />
                 </div>
-                {error && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{error}</p>}
+                <ErrorMsg msg={error} />
             </div>
 
             <div className="flex gap-3 justify-end">
-                <button onClick={onClose} disabled={isPending} className="rounded-xl border border-white/10 hover:border-white/20 text-gray-400 hover:text-white px-4 py-2 text-sm font-medium transition-all disabled:opacity-50">Cancelar</button>
-                <button onClick={handleSalvar} disabled={isPending} className="inline-flex items-center gap-2 rounded-xl bg-blue-500 hover:bg-blue-400 text-white px-5 py-2 text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed">
-                    {isPending ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} strokeWidth={2.5} />}
+                <Button variant="outline" onClick={onClose} disabled={isPending}>Cancelar</Button>
+                <Button variant="info" onClick={handleSalvar} isLoading={isPending} icon={<Check size={14} strokeWidth={2.5} />}>
                     {isPending ? "Salvando…" : "Salvar"}
-                </button>
+                </Button>
             </div>
         </Modal>
     );
@@ -374,54 +273,46 @@ function DeleteParcelaModal({
     const [isPending, startTransition] = useTransition();
     const [error, setError] = useState<string | null>(null);
 
-    function handleConfirmar() {
-        setError(null);
-        startTransition(async () => {
-            const res = await softDeleteParcela(parcela.id);
-            if (res.ok) {
-                onClose();
-            } else {
-                setError(res.error ?? "Erro desconhecido.");
-            }
-        });
-    }
-
     const ref = parcela.sub_indice
         ? `${parcela.numero_referencia}-${parcela.sub_indice}`
         : `${parcela.numero_referencia}`;
 
-    return (
-        <Modal onClose={onClose}>
-            <div className="flex items-center gap-3">
-                <span className="flex items-center justify-center w-9 h-9 rounded-xl bg-red-500/10 text-red-400 shrink-0">
-                    <AlertTriangle size={16} />
-                </span>
-                <div>
-                    <h2 className="text-base font-bold text-white">Excluir Parcela #{ref}</h2>
-                    <p className="text-xs text-gray-500">Esta ação pode ser revertida pelo admin</p>
-                </div>
-            </div>
+    function handleConfirmar() {
+        setError(null);
+        startTransition(async () => {
+            const res = await softDeleteParcela(parcela.id);
+            if (res.ok) onClose();
+            else setError(res.error ?? "Erro desconhecido.");
+        });
+    }
 
+    return (
+        <Modal
+            onClose={onClose}
+            title={`Excluir Parcela #${ref}`}
+            subtitle="Esta ação pode ser revertida pelo admin"
+            icon={<AlertTriangle size={16} className="text-red-400" />}
+        >
             <div className="rounded-xl bg-red-500/5 border border-red-500/20 p-4">
                 <p className="text-sm text-gray-300 leading-relaxed">
-                    A parcela de <strong className="text-white">{brl(parcela.valor_previsto)}</strong> será marcada como excluída logicamente e removida da listagem.
+                    A parcela de <strong className="text-white">{brl(parcela.valor_previsto)}</strong> será
+                    marcada como excluída logicamente e removida da listagem.
                 </p>
             </div>
 
-            {error && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{error}</p>}
+            <ErrorMsg msg={error} />
 
             <div className="flex gap-3 justify-end">
-                <button onClick={onClose} disabled={isPending} className="rounded-xl border border-white/10 hover:border-white/20 text-gray-400 hover:text-white px-4 py-2 text-sm font-medium transition-all disabled:opacity-50">Cancelar</button>
-                <button onClick={handleConfirmar} disabled={isPending} className="inline-flex items-center gap-2 rounded-xl bg-red-500 hover:bg-red-400 text-white px-5 py-2 text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed">
-                    {isPending ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                <Button variant="outline" onClick={onClose} disabled={isPending}>Cancelar</Button>
+                <Button variant="danger" onClick={handleConfirmar} isLoading={isPending} icon={<Trash2 size={14} />}>
                     {isPending ? "Excluindo…" : "Confirmar"}
-                </button>
+                </Button>
             </div>
         </Modal>
     );
 }
 
-// ─── Não Renovar Modal ─────────────────────────────────────────────────────────────
+// ─── Não Renovar Modal ────────────────────────────────────────────────────────
 function NaoRenovarModal({
     parcela,
     onClose,
@@ -436,29 +327,20 @@ function NaoRenovarModal({
     function handleConfirmar() {
         setError(null);
         startTransition(async () => {
-            // Import inline to avoid circular dep issues
             const { editarParcelaStatus } = await import("@/actions/parcelas");
             const res = await editarParcelaStatus(parcela.id, "FINALIZAR PROJETO");
-            if (res.ok) {
-                setDone(true);
-            } else {
-                setError(res.error ?? "Erro desconhecido.");
-            }
+            if (res.ok) setDone(true);
+            else setError(res.error ?? "Erro desconhecido.");
         });
     }
 
     return (
-        <Modal onClose={onClose}>
-            <div className="flex items-center gap-3">
-                <span className="flex items-center justify-center w-9 h-9 rounded-xl bg-red-500/10 text-red-400 shrink-0">
-                    <XCircle size={18} />
-                </span>
-                <div>
-                    <h2 className="text-base font-bold text-white">Não Renovar Contrato</h2>
-                    <p className="text-xs text-gray-500">Esta ação é permanente e registra o churn.</p>
-                </div>
-            </div>
-
+        <Modal
+            onClose={onClose}
+            title="Não Renovar Contrato"
+            subtitle="Esta ação é permanente e registra o churn."
+            icon={<XCircle size={18} className="text-red-400" />}
+        >
             {done ? (
                 <div className="rounded-xl bg-red-500/5 border border-red-500/20 p-4 text-center">
                     <p className="text-sm text-red-300 font-semibold">✔ Contrato finalizado. Sem renovação.</p>
@@ -472,29 +354,12 @@ function NaoRenovarModal({
                             definitivo deste cliente. Esta ação pode ser revertida pelo admin.
                         </p>
                     </div>
-
-                    {error && (
-                        <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-                            {error}
-                        </p>
-                    )}
-
+                    <ErrorMsg msg={error} />
                     <div className="flex gap-3 justify-end">
-                        <button
-                            onClick={onClose}
-                            disabled={isPending}
-                            className="rounded-xl border border-white/10 hover:border-white/20 text-gray-400 hover:text-white px-4 py-2 text-sm font-medium transition-all disabled:opacity-50"
-                        >
-                            Cancelar
-                        </button>
-                        <button
-                            onClick={handleConfirmar}
-                            disabled={isPending}
-                            className="inline-flex items-center gap-2 rounded-xl bg-red-500 hover:bg-red-400 text-white px-5 py-2 text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            {isPending ? <Loader2 size={14} className="animate-spin" /> : <XCircle size={14} />}
+                        <Button variant="outline" onClick={onClose} disabled={isPending}>Cancelar</Button>
+                        <Button variant="danger" onClick={handleConfirmar} isLoading={isPending} icon={<XCircle size={14} />}>
                             {isPending ? "Finalizando…" : "Confirmar Churn"}
-                        </button>
+                        </Button>
                     </div>
                 </>
             )}
@@ -502,7 +367,7 @@ function NaoRenovarModal({
     );
 }
 
-// ─── Renovar Modal ──────────────────────────────────────────────────────────────────
+// ─── Renovar Modal ────────────────────────────────────────────────────────────
 function RenovarModal({
     parcela,
     onClose,
@@ -513,86 +378,79 @@ function RenovarModal({
     const [periodo, setPeriodo] = useState("12");
     const [valorTotal, setValorTotal] = useState("");
     const [isPending, startTransition] = useTransition();
+    const [error, setError] = useState<string | null>(null);
+    const [done, setDone] = useState(false);
+
+    const valorNum = parseFloat(valorTotal) || 0;
+    const periodoNum = Number(periodo);
+    const isValid = valorNum > 0 && periodoNum >= 1;
 
     function handleRenovar() {
+        setError(null);
+        if (!parcela.contrato_id || !parcela.cliente_id) {
+            setError("Dados do contrato insuficientes. Recarregue a página.");
+            return;
+        }
         startTransition(async () => {
-            // Backend generation wired in next step
-            console.log("[RenovarModal] Dados para renovação:", {
-                parcelaId: parcela.id,
-                novo_periodo_meses: Number(periodo),
-                novo_valor_total: parseFloat(valorTotal),
+            const res = await renovarContrato({
+                parcelaRenovacaoId: parcela.id,
+                contratoAntigoId: parcela.contrato_id!,
+                clienteId: parcela.cliente_id!,
+                novo_periodo_meses: periodoNum,
+                novo_valor_total: valorNum,
             });
-            onClose();
+            if (res.ok) setDone(true);
+            else setError(res.error ?? "Erro desconhecido.");
         });
     }
 
     return (
-        <Modal onClose={onClose}>
-            {/* Header */}
-            <div className="flex items-center gap-3">
-                <span className="flex items-center justify-center w-9 h-9 rounded-xl bg-green-500/10 text-green-400 shrink-0">
-                    <RefreshCw size={18} />
-                </span>
-                <div>
-                    <h2 className="text-base font-bold text-white">Renovar Contrato</h2>
-                    <p className="text-xs text-gray-500">Defina o período e valor da renovação</p>
+        <Modal
+            onClose={onClose}
+            title="Renovar Contrato"
+            subtitle="Defina o período e valor da renovação"
+            icon={<RefreshCw size={18} className="text-green-400" />}
+        >
+            {done ? (
+                <div className="rounded-xl bg-green-500/5 border border-green-500/20 p-4 text-center">
+                    <p className="text-sm text-green-300 font-semibold">✔ Contrato renovado com sucesso! As novas parcelas foram geradas.</p>
                 </div>
-            </div>
+            ) : (
+                <>
+                    <div className="flex flex-col gap-4">
+                        <div className="flex flex-col gap-1.5">
+                            <label className={labelCls}>Novo Período (meses)</label>
+                            <input type="number" min="1" max="60" step="1" value={periodo}
+                                onChange={(e) => setPeriodo(e.target.value)} className={inputCls} />
+                        </div>
 
-            {/* Fields */}
-            <div className="flex flex-col gap-4">
-                <div className="flex flex-col gap-1.5">
-                    <label className={labelCls}>Novo Período (meses)</label>
-                    <input
-                        type="number"
-                        min="1"
-                        max="60"
-                        step="1"
-                        value={periodo}
-                        onChange={(e) => setPeriodo(e.target.value)}
-                        className={inputCls}
-                    />
-                </div>
+                        <div className="flex flex-col gap-1.5">
+                            <label className={labelCls}>Novo Valor Total (R$)</label>
+                            <input type="number" min="0.01" step="0.01" value={valorTotal}
+                                onChange={(e) => setValorTotal(e.target.value)}
+                                placeholder="Ex: 12000.00" className={inputCls} />
+                        </div>
 
-                <div className="flex flex-col gap-1.5">
-                    <label className={labelCls}>Novo Valor Total (R$)</label>
-                    <input
-                        type="number"
-                        min="0.01"
-                        step="0.01"
-                        value={valorTotal}
-                        onChange={(e) => setValorTotal(e.target.value)}
-                        placeholder="Ex: 12000.00"
-                        className={inputCls}
-                    />
-                </div>
+                        <div className="rounded-xl bg-green-500/5 border border-green-500/20 p-3 text-xs text-green-300 leading-relaxed">
+                            📅 Serão geradas <strong className="text-white">{periodo} novas parcelas</strong> com valor
+                            de <strong className="text-white">
+                                {valorNum > 0 && periodoNum > 0 ? brl(valorNum / periodoNum) : "R$ —"}
+                            </strong> cada.
+                        </div>
 
-                <div className="rounded-xl bg-green-500/5 border border-green-500/20 p-3 text-xs text-green-300 leading-relaxed">
-                    📅 Serão geradas <strong className="text-white">{periodo} novas parcelas</strong> com valor
-                    de <strong className="text-white">
-                        {valorTotal ? brl(parseFloat(valorTotal) / Number(periodo)) : "R$ —"}
-                    </strong> cada.
-                </div>
-            </div>
+                        {error && <ErrorMsg msg={error} />}
+                    </div>
 
-            {/* Actions */}
-            <div className="flex gap-3 justify-end">
-                <button
-                    onClick={onClose}
-                    disabled={isPending}
-                    className="rounded-xl border border-white/10 hover:border-white/20 text-gray-400 hover:text-white px-4 py-2 text-sm font-medium transition-all disabled:opacity-50"
-                >
-                    Cancelar
-                </button>
-                <button
-                    onClick={handleRenovar}
-                    disabled={isPending || !valorTotal || Number(periodo) < 1}
-                    className="inline-flex items-center gap-2 rounded-xl bg-green-500 hover:bg-green-400 active:bg-green-600 text-black px-5 py-2 text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                    {isPending ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                    {isPending ? "Processando…" : "Renovar"}
-                </button>
-            </div>
+                    <div className="flex gap-3 justify-end">
+                        <Button variant="outline" onClick={onClose} disabled={isPending}>Cancelar</Button>
+                        <Button variant="success" onClick={handleRenovar} isLoading={isPending}
+                            disabled={isPending || !isValid}
+                            icon={<RefreshCw size={14} />}>
+                            {isPending ? "Processando…" : "Renovar"}
+                        </Button>
+                    </div>
+                </>
+            )}
         </Modal>
     );
 }
@@ -661,7 +519,7 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
         );
     }
 
-    // Not actionable (e.g., RENOVAR CONTRATO, etc.)
+    // Not actionable statuses
     if (!isNormal) {
         return (
             <span className="text-[11px] text-gray-600 font-medium">
@@ -672,7 +530,7 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
 
     return (
         <>
-            {/* Action buttons */}
+            {/* Action buttons — inline icon-only style kept intentionally compact */}
             <div className="inline-flex items-center gap-1.5 flex-wrap justify-center">
                 {/* Dar Baixa */}
                 <button
@@ -684,7 +542,7 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
                     Dar Baixa
                 </button>
 
-                {/* Dividir — hidden for sub-installments (4-1, 4-2, …) */}
+                {/* Dividir — hidden for sub-installments */}
                 {showSplit && (
                     <button
                         onClick={() => setIsSplitOpen(true)}
@@ -719,7 +577,7 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
                 )}
             </div>
 
-            {/* Modals — portaled to document.body to escape table/backdrop-blur clipping */}
+            {/* Modals — portaled to document.body via Modal component */}
             {mounted && isPaymentOpen && (
                 <PaymentModal
                     parcela={parcela}

@@ -2,6 +2,7 @@
 
 import { supabaseAdmin } from '../lib/supabase';
 import { calcularDataDisponibilidade } from '../lib/utils';
+import { requireAuth } from '../lib/authGuard';
 
 export type TipoCadastro = 'RECORRENTE' | 'A_VISTA' | 'PONTUAL' | 'ANTIGO';
 
@@ -37,6 +38,7 @@ export async function cadastrarClienteCompleto(dados: DadosCadastroCompleto) {
     let clienteCriadoNestaSessaoId: string | null = null;
 
     try {
+        await requireAuth();
         console.log(`Iniciando cadastro [${dados.tipo_cadastro}]:`, dados.nome);
 
         // --- 1. VERIFICA CNPJ DUPLICADO ---

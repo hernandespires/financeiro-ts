@@ -1,56 +1,14 @@
-/**
- * @file financeRules.ts
- * @description Single Source of Truth for all financial calculations, risk
- * assessments, and forecast visibility rules across the ERP.
- *
- * All functions here are pure (no side-effects, no DB calls) so they can be
- * safely imported by both Server Components and Server Actions.
- */
+import { daysLate } from "./utils";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Constants
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Installments overdue up to this many days are still counted in the revenue
- *  forecast (bucket: ATRASO). */
 export const DIAS_TOLERANCIA_ATRASO = 14;
-
-/** Installments overdue beyond this many days are classified as PERDA. */
 export const DIAS_INADIMPLENCIA = 30;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 1. Days-late calculator
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Returns how many days late a due date is relative to a reference date.
- * Positive = overdue, 0 = due on that day, negative = future.
- *
- * Both arguments must be "YYYY-MM-DD" strings.
- */
-export function calcularDiasAtraso(
-    dataVencimento: string,
-    dataReferenciaStr: string
-): number {
-    const due = new Date(dataVencimento + 'T00:00:00');
-    const ref = new Date(dataReferenciaStr + 'T00:00:00');
-    return Math.round((ref.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
+export function calcularDiasAtraso(dataVencimento: string, dataReferenciaStr: string): number {
+    return daysLate(dataVencimento, dataReferenciaStr);
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 2. Risk classifier
-// ─────────────────────────────────────────────────────────────────────────────
 
 export type RiskLevel = 'EM DIA' | 'ATRASO' | 'INADIMPLENTE' | 'PERDA';
 
-/**
- * Maps days-overdue to a risk bucket.
- *
- * ≤ 0 days  → EM DIA
- *  1–14 days → ATRASO          (tolerância)
- * 15–30 days → INADIMPLENTE
- * > 30 days  → PERDA
- */
 export function getRiskStatus(diasAtraso: number): RiskLevel {
     if (diasAtraso >= 30) return 'PERDA';
     if (diasAtraso >= 15) return 'INADIMPLENTE';
@@ -58,18 +16,6 @@ export function getRiskStatus(diasAtraso: number): RiskLevel {
     return 'EM DIA';
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 2b. Soft-delete guard (cascades through contract → client)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Returns `true` if a parcela (and its parent contract/client) is NOT
- * soft-deleted. Use this to build risk buckets that must include ≥15d late
- * installments — before applying the forecast-eligibility filter.
- *
- * @param parcela  Any shape with optional `deleted_at`, `contratos.deleted_at`,
- *                 and `contratos.clientes.deleted_at` fields.
- */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function isNotDeleted(parcela: any): boolean {
     if (parcela.deleted_at != null) return false;
@@ -83,94 +29,30 @@ export function isNotDeleted(parcela: any): boolean {
     return true;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 3. Forecast eligibility filter
-// ─────────────────────────────────────────────────────────────────────────────
-
 /**
- * Returns `true` if a parcela should be counted in the revenue forecast.
- *
- * EXCLUDED if any of the following are true:
- *   - `parcela.deleted_at` is not null (soft-deleted)
- *   - `status_manual_override` is 'RENOVAR CONTRATO'
- *   - Risk bucket is 'INADIMPLENTE' or 'PERDA' (≥15 days overdue)
- *
- * INCLUDED if:
- *   - `status_manual_override` is 'PAGO'
- *   - Risk bucket is 'EM DIA' or 'ATRASO' (≤14 days overdue)
- *
- * @param parcela   Any object with the necessary fields (typed as `any` for
- *                  flexibility across different query shapes).
- * @param todayStr  Current date as "YYYY-MM-DD".
+ * Scans all open parcelas and returns the Set of contrato_ids that are "dirty":
+ * – have a NORMAL installment ≥15 days overdue, OR
+ * – already carry a status flag that signals default (INADIMPLENTE, etc.)
+ * ALL parcelas of those contracts are blocked from the forecast regardless of
+ * their own individual due date.
  */
-export function isParcelaValidaParaPrevisao(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    parcela: any,
-    todayStr: string,
-    contratosSujos: Set<string> = new Set()
-): boolean {
-    // Rule 1: installment itself is soft-deleted
-    if (parcela.deleted_at != null) return false;
-
-    // Rule 2: Soft-Delete Cascade — exclude if parent contract or client is deleted.
-    // Guards against orphaned parcelas from soft-deleted contracts/clients appearing
-    // in revenue forecasts. Handles both object and array Supabase join shapes.
-    if (parcela.contratos) {
-        if (parcela.contratos.deleted_at != null) return false;
-
-        const cliente = Array.isArray(parcela.contratos.clientes)
-            ? parcela.contratos.clientes[0]
-            : parcela.contratos.clientes;
-
-        if (cliente && cliente.deleted_at != null) return false;
-    }
-
-    const status: string = parcela.status_manual_override ?? '';
-
-    // Rule 3: "RENOVAR CONTRATO" is not a collectible installment
-    if (status === 'RENOVAR CONTRATO') return false;
-
-    // Rule 4: always include if already paid (no risk uncertainty)
-    if (status === 'PAGO') return true;
-
-    // Rule 5: BARREIRA CROSS-DEFAULT (Contagion) —
-    // If the contract has ANY installment ≥15 days overdue, no open installment
-    // from that contract enters the forecast (even future due dates).
-    if (parcela.contrato_id && contratosSujos.has(parcela.contrato_id)) return false;
-
-    // Rule 6: classify overdue risk and exclude INADIMPLENTE / PERDA
-    const dias = calcularDiasAtraso(
-        parcela.data_vencimento as string,
-        todayStr
-    );
-    const risk = getRiskStatus(dias);
-
-    return risk === 'EM DIA' || risk === 'ATRASO';
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 3b. Cross-Default contagion detector
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Scans all parcelas and returns the set of `contrato_id`s that are
- * "dirty" — i.e., have at least one NORMAL installment ≥ 15 days overdue.
- *
- * Pass the result to `isParcelaValidaParaPrevisao` as `contratosSujos` so
- * that ALL open installments of those contracts are excluded from the forecast,
- * even future ones that individually appear healthy.
- *
- * @param todasParcelas  Full (unfiltered) list of parcelas from the DB.
- * @param todayStr       Current date as "YYYY-MM-DD".
- */
-export function getContratosSujos(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    todasParcelas: any[],
-    todayStr: string
-): Set<string> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function getContratosSujos(todasParcelasAbertas: any[], todayStr: string): Set<string> {
     const sujos = new Set<string>();
-    for (const p of todasParcelas) {
-        if (p.status_manual_override === 'NORMAL' && p.data_vencimento) {
+    for (const p of todasParcelasAbertas) {
+        if (!isNotDeleted(p)) continue;
+
+        const status = p.status_manual_override ?? '';
+        if (
+            status === 'INADIMPLENTE' ||
+            status === 'PERDA DE FATURAMENTO' ||
+            status === 'POSSUI INADIMPLENCIA'
+        ) {
+            if (p.contrato_id) sujos.add(p.contrato_id);
+            continue;
+        }
+
+        if (status === 'NORMAL' && p.data_vencimento) {
             const dias = calcularDiasAtraso(p.data_vencimento, todayStr);
             if (dias >= 15 && p.contrato_id) {
                 sujos.add(p.contrato_id);
@@ -180,41 +62,74 @@ export function getContratosSujos(
     return sujos;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 4. Contract value recalculation
-// ─────────────────────────────────────────────────────────────────────────────
-
 /**
- * Calculates the new contract total after an installment is soft-deleted
- * (EXCLUIR) or restored (RESTAURAR).
+ * THE ABSOLUTE FIREWALL.
  *
- * Uses strict `Number()` parsing to prevent string-concatenation bugs and
- * clamps the result to ≥ 0 (contract value can never be negative).
+ * Returns true ONLY if a parcela is safe to include in the cash-flow forecast.
  *
- * @param valorAtual   Current `valor_total_contrato` (must be a number, not a string)
- * @param valorParcela Installment `valor_previsto` being added or removed
- * @param operacao     'EXCLUIR' subtracts; 'RESTAURAR' adds
- * @returns            New contract total, always ≥ 0
+ * Rules (in order):
+ *  1. Soft-deleted parcela / contract / client → OUT.
+ *  2. Terminal statuses (RENOVAR CONTRATO, FINALIZAR PROJETO, QUEBRA DE CONTRATO) → OUT.
+ *  3. Explicit default statuses (INADIMPLENTE, PERDA DE FATURAMENTO, POSSUI INADIMPLENCIA) → OUT.
+ *  4. CROSS-DEFAULT CONTAGION: if the contract is in contratosSujos → OUT.
+ *  5. PAGO / INADIMPLENTE RECEBIDO → IN (already collected, include in received totals).
+ *  6. Normal overdue check: INADIMPLENTE (≥15d) / PERDA (≥30d) → OUT.
+ *  7. EM DIA or ATRASO (<15d) → IN.
  */
+export function isParcelaValidaParaPrevisao(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    parcela: any,
+    todayStr: string,
+    contratosSujos?: Set<string>
+): boolean {
+    // Rule 1: soft-delete cascade
+    if (!isNotDeleted(parcela)) return false;
+
+    const status: string = parcela.status_manual_override ?? '';
+
+    // Rule 2: terminal / non-billable statuses
+    if (
+        status === 'RENOVAR CONTRATO' ||
+        status === 'FINALIZAR PROJETO' ||
+        status === 'QUEBRA DE CONTRATO' ||
+        status === 'RENOVADO'
+    ) return false;
+
+    // Rule 3: explicit default flags
+    if (
+        status === 'INADIMPLENTE' ||
+        status === 'PERDA DE FATURAMENTO' ||
+        status === 'POSSUI INADIMPLENCIA'
+    ) return false;
+
+    // Rule 4: CROSS-DEFAULT CONTAGION BARRIER
+    // Any future/current installment of a dirty contract is blocked.
+    if (status === 'NORMAL' && contratosSujos && parcela.contrato_id) {
+        if (contratosSujos.has(parcela.contrato_id)) return false;
+    }
+
+    // Rule 5: already paid → include (booked revenue)
+    if (status === 'PAGO' || status === 'INADIMPLENTE RECEBIDO') return true;
+
+    // Rule 6: individual days-late check for remaining NORMAL installments
+    const dias = calcularDiasAtraso(parcela.data_vencimento as string, todayStr);
+    const risk = getRiskStatus(dias);
+
+    // INADIMPLENTE (≥15d) and PERDA (≥30d) → OUT
+    return risk === 'EM DIA' || risk === 'ATRASO';
+}
+
 export function calcularNovoValorContrato(
     valorAtual: number,
     valorParcela: number,
     operacao: 'EXCLUIR' | 'RESTAURAR'
 ): number {
-    const atual = Number(valorAtual);   // guard against accidental string input
+    const atual = Number(valorAtual);
     const parcela = Number(valorParcela);
-
-    if (!isFinite(atual) || !isFinite(parcela)) {
-        throw new Error(
-            `calcularNovoValorContrato: valores inválidos — atual=${valorAtual}, parcela=${valorParcela}`
-        );
-    }
-
+    if (!isFinite(atual) || !isFinite(parcela)) throw new Error("Valores inválidos");
     const resultado =
         operacao === 'EXCLUIR'
             ? parseFloat((atual - parcela).toFixed(2))
             : parseFloat((atual + parcela).toFixed(2));
-
-    // Contract total must never go negative
     return Math.max(0, resultado);
 }

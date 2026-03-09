@@ -5,6 +5,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { registrarLog } from "@/lib/logger";
 import { calcularNovoValorContrato } from "@/lib/financeRules";
 import { calcularDataDisponibilidade } from "@/lib/utils";
+import { requireAuth } from "@/lib/authGuard";
 
 // ─── Shared revalidation ──────────────────────────────────────────────────────
 function revalidateAll(clienteId?: string) {
@@ -35,6 +36,7 @@ export async function registrarPagamentoCompleto(
     observacao?: string
 ): Promise<ActionResult> {
     try {
+        await requireAuth();
         // ── Step 1: Fetch context — need numero_referencia, contrato and client ──
         const { data: parcela, error: fetchErr } = await supabaseAdmin
             .from('parcelas')
@@ -153,102 +155,107 @@ export async function desmembrarParcela(
     parcelaId: string,
     novoValorPrimeira: number
 ): Promise<ActionResult> {
-    // Step 1: fetch original parcela
-    const { data: original, error: fetchError } = await supabaseAdmin
-        .from("parcelas")
-        .select(
-            "id, contrato_id, numero_referencia, data_vencimento, tipo_parcela, categoria, observacao, valor_previsto, sub_indice"
-        )
-        .eq("id", parcelaId)
-        .single();
+    try {
+        await requireAuth();
+        // Step 1: fetch original parcela
+        const { data: original, error: fetchError } = await supabaseAdmin
+            .from("parcelas")
+            .select(
+                "id, contrato_id, numero_referencia, data_vencimento, tipo_parcela, categoria, observacao, valor_previsto, sub_indice"
+            )
+            .eq("id", parcelaId)
+            .single();
 
-    if (fetchError || !original) {
-        console.error("[desmembrarParcela] Parcela não encontrada:", fetchError?.message);
-        return { ok: false, error: fetchError?.message ?? "Parcela não encontrada." };
-    }
+        if (fetchError || !original) {
+            console.error("[desmembrarParcela] Parcela não encontrada:", fetchError?.message);
+            return { ok: false, error: fetchError?.message ?? "Parcela não encontrada." };
+        }
 
-    // Guard: prevent splitting a sub-installment (already produced by a prior split)
-    if (original.sub_indice !== null && original.sub_indice > 0) {
-        return {
-            ok: false,
-            error: "Não é possível dividir uma parcela que já foi dividida (sub-parcela).",
-        };
-    }
+        // Guard: prevent splitting a sub-installment (already produced by a prior split)
+        if (original.sub_indice !== null && original.sub_indice > 0) {
+            return {
+                ok: false,
+                error: "Não é possível dividir uma parcela que já foi dividida (sub-parcela).",
+            };
+        }
 
-    const saldoRestante = Number(
-        (original.valor_previsto - novoValorPrimeira).toFixed(2)
-    );
-
-    if (saldoRestante <= 0) {
-        return {
-            ok: false,
-            error: "O novo valor da primeira parcela deve ser menor que o valor original.",
-        };
-    }
-
-    // Step 2: update original parcela with the new partial value and sub_indice = 1
-    const { error: updateError } = await supabaseAdmin
-        .from("parcelas")
-        .update({
-            valor_previsto: novoValorPrimeira,
-            sub_indice: 1,
-        })
-        .eq("id", parcelaId);
-
-    if (updateError) {
-        console.error("[desmembrarParcela] Erro ao atualizar original:", updateError.message);
-        return { ok: false, error: updateError.message };
-    }
-
-    // Step 3: insert sibling parcela with the remaining balance
-    const { error: insertError } = await supabaseAdmin
-        .from("parcelas")
-        .insert({
-            contrato_id: original.contrato_id,
-            numero_referencia: original.numero_referencia,
-            data_vencimento: original.data_vencimento,
-            tipo_parcela: original.tipo_parcela,
-            categoria: original.categoria,
-            observacao: original.observacao
-                ? `${original.observacao} (saldo)`
-                : "Saldo desmembrado",
-            valor_previsto: saldoRestante,
-            sub_indice: 2,
-            status_manual_override: "NORMAL" as any,
-        });
-
-    if (insertError) {
-        console.error("[desmembrarParcela] Erro ao inserir parcela filha:", insertError.message);
-        return {
-            ok: false,
-            error: `Original atualizado, mas falha ao criar parcela saldo: ${insertError.message}`,
-        };
-    }
-
-    // Step 4: resolve cliente_id for audit log
-    const { data: contratoData } = await supabaseAdmin
-        .from('contratos')
-        .select('cliente_id')
-        .eq('id', original.contrato_id)
-        .single();
-
-    const clienteId = (contratoData as any)?.cliente_id;
-    const brlFmt = (v: number) =>
-        new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
-
-    if (clienteId) {
-        await registrarLog(
-            clienteId,
-            'PARCELAS',
-            `Dividiu a parcela ${original.numero_referencia} em 2: ` +
-            `${brlFmt(novoValorPrimeira)} (parte 1) + ${brlFmt(saldoRestante)} (parte 2)`
+        const saldoRestante = Number(
+            (original.valor_previsto - novoValorPrimeira).toFixed(2)
         );
+
+        if (saldoRestante <= 0) {
+            return {
+                ok: false,
+                error: "O novo valor da primeira parcela deve ser menor que o valor original.",
+            };
+        }
+
+        // Step 2: update original parcela with the new partial value and sub_indice = 1
+        const { error: updateError } = await supabaseAdmin
+            .from("parcelas")
+            .update({
+                valor_previsto: novoValorPrimeira,
+                sub_indice: 1,
+            })
+            .eq("id", parcelaId);
+
+        if (updateError) {
+            console.error("[desmembrarParcela] Erro ao atualizar original:", updateError.message);
+            return { ok: false, error: updateError.message };
+        }
+
+        // Step 3: insert sibling parcela with the remaining balance
+        const { error: insertError } = await supabaseAdmin
+            .from("parcelas")
+            .insert({
+                contrato_id: original.contrato_id,
+                numero_referencia: original.numero_referencia,
+                data_vencimento: original.data_vencimento,
+                tipo_parcela: original.tipo_parcela,
+                categoria: original.categoria,
+                observacao: original.observacao
+                    ? `${original.observacao} (saldo)`
+                    : "Saldo desmembrado",
+                valor_previsto: saldoRestante,
+                sub_indice: 2,
+                status_manual_override: "NORMAL" as any,
+            });
+
+        if (insertError) {
+            console.error("[desmembrarParcela] Erro ao inserir parcela filha:", insertError.message);
+            return {
+                ok: false,
+                error: `Original atualizado, mas falha ao criar parcela saldo: ${insertError.message}`,
+            };
+        }
+
+        // Step 4: resolve cliente_id for audit log
+        const { data: contratoData } = await supabaseAdmin
+            .from('contratos')
+            .select('cliente_id')
+            .eq('id', original.contrato_id)
+            .single();
+
+        const clienteId = (contratoData as any)?.cliente_id;
+        const brlFmt = (v: number) =>
+            new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+
+        if (clienteId) {
+            await registrarLog(
+                clienteId,
+                'PARCELAS',
+                `Dividiu a parcela ${original.numero_referencia} em 2: ` +
+                `${brlFmt(novoValorPrimeira)} (parte 1) + ${brlFmt(saldoRestante)} (parte 2)`
+            );
+        }
+
+        revalidateAll(clienteId);
+        return { ok: true };
+    } catch (err: any) {
+        console.error('[desmembrarParcela] Exceção:', err);
+        return { ok: false, error: err.message || 'Erro desconhecido.' };
     }
-
-    revalidateAll(clienteId);
-    return { ok: true };
 }
-
 // ─────────────────────────────────────────────────────────────────────────────
 // 3. EDITAR PARCELA
 //    Fetches OLD values for diff logging, propagates value change to the parent
@@ -261,6 +268,7 @@ export async function editarParcela(
     novaDataVencimento: string
 ): Promise<ActionResult> {
     try {
+        await requireAuth();
         // Guard: abort if already paid
         const { data: pag } = await supabaseAdmin
             .from('pagamentos')
@@ -377,78 +385,84 @@ export async function editarParcela(
 //    Sets deleted_at. Blocked if a payment record exists.
 // ─────────────────────────────────────────────────────────────────────────────
 export async function softDeleteParcela(id: string): Promise<ActionResult> {
-    // Guard: abort if already paid
-    const { data: pag } = await supabaseAdmin
-        .from('pagamentos')
-        .select('id')
-        .eq('parcela_id', id)
-        .maybeSingle();
+    try {
+        await requireAuth();
+        // Guard: abort if already paid
+        const { data: pag } = await supabaseAdmin
+            .from('pagamentos')
+            .select('id')
+            .eq('parcela_id', id)
+            .maybeSingle();
 
-    if (pag) {
-        return { ok: false, error: "Esta parcela já possui pagamento registrado e não pode ser excluída." };
+        if (pag) {
+            return { ok: false, error: "Esta parcela já possui pagamento registrado e não pode ser excluída." };
+        }
+
+        // ── Fetch full context for math + logging ────────────────────────────────
+        const { data: parcela, error: fetchError } = await supabaseAdmin
+            .from('parcelas')
+            .select('numero_referencia, sub_indice, valor_previsto, contrato_id, contratos(cliente_id, valor_total_contrato)')
+            .eq('id', id)
+            .single();
+
+        if (fetchError || !parcela) {
+            return { ok: false, error: fetchError?.message ?? "Parcela não encontrada." };
+        }
+
+        const brlFmt = (v: number) =>
+            new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+
+        const contratoData = parcela.contratos as any;
+        const clienteId: string | null = contratoData?.cliente_id ?? null;
+        const valorParcela: number = Number(parcela.valor_previsto ?? 0);
+        const valorAtualContrato: number = Number(contratoData?.valor_total_contrato ?? NaN);
+        const ref = parcela.sub_indice
+            ? `${parcela.numero_referencia}-${parcela.sub_indice}`
+            : `${parcela.numero_referencia}`;
+
+        // ── Soft delete the parcela ───────────────────────────────────────────────
+        const { error } = await supabaseAdmin
+            .from('parcelas')
+            .update({ deleted_at: new Date().toISOString() })
+            .eq('id', id);
+
+        if (error) return { ok: false, error: error.message };
+
+        // ── Deduct from contract total via central finance rule ───────────────────
+        let novoValorContrato: number | null = null;
+        if (!isNaN(valorAtualContrato) && isFinite(valorAtualContrato) && parcela.contrato_id) {
+            novoValorContrato = calcularNovoValorContrato(valorAtualContrato, valorParcela, 'EXCLUIR');
+
+            await supabaseAdmin
+                .from('contratos')
+                .update({ valor_total_contrato: novoValorContrato } as any)
+                .eq('id', parcela.contrato_id);
+        }
+
+        // ── Detailed audit log ────────────────────────────────────────────────────
+        if (clienteId) {
+            const logMsg = novoValorContrato !== null
+                ? `Excluiu a parcela ${ref} (${brlFmt(valorParcela)}). ` +
+                `Valor total do contrato reduzido de ${brlFmt(valorAtualContrato)} para ${brlFmt(novoValorContrato)}.`
+                : `Excluiu a parcela ${ref} (${brlFmt(valorParcela)}) logicamente.`;
+
+            await registrarLog(clienteId, 'PARCELAS', logMsg);
+        }
+
+        revalidateAll(clienteId ?? undefined);
+        return { ok: true };
+    } catch (err: any) {
+        console.error('[softDeleteParcela] Exceção:', err);
+        return { ok: false, error: err.message || 'Erro desconhecido.' };
     }
-
-    // ── Fetch full context for math + logging ────────────────────────────────
-    const { data: parcela, error: fetchError } = await supabaseAdmin
-        .from('parcelas')
-        .select('numero_referencia, sub_indice, valor_previsto, contrato_id, contratos(cliente_id, valor_total_contrato)')
-        .eq('id', id)
-        .single();
-
-    if (fetchError || !parcela) {
-        return { ok: false, error: fetchError?.message ?? "Parcela não encontrada." };
-    }
-
-    const brlFmt = (v: number) =>
-        new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
-
-    const contratoData = parcela.contratos as any;
-    const clienteId: string | null = contratoData?.cliente_id ?? null;
-    const valorParcela: number = Number(parcela.valor_previsto ?? 0);
-    const valorAtualContrato: number = Number(contratoData?.valor_total_contrato ?? NaN);
-    const ref = parcela.sub_indice
-        ? `${parcela.numero_referencia}-${parcela.sub_indice}`
-        : `${parcela.numero_referencia}`;
-
-    // ── Soft delete the parcela ───────────────────────────────────────────────
-    const { error } = await supabaseAdmin
-        .from('parcelas')
-        .update({ deleted_at: new Date().toISOString() })
-        .eq('id', id);
-
-    if (error) return { ok: false, error: error.message };
-
-    // ── Deduct from contract total via central finance rule ───────────────────
-    let novoValorContrato: number | null = null;
-    if (!isNaN(valorAtualContrato) && isFinite(valorAtualContrato) && parcela.contrato_id) {
-        novoValorContrato = calcularNovoValorContrato(valorAtualContrato, valorParcela, 'EXCLUIR');
-
-        await supabaseAdmin
-            .from('contratos')
-            .update({ valor_total_contrato: novoValorContrato } as any)
-            .eq('id', parcela.contrato_id);
-    }
-
-    // ── Detailed audit log ────────────────────────────────────────────────────
-    if (clienteId) {
-        const logMsg = novoValorContrato !== null
-            ? `Excluiu a parcela ${ref} (${brlFmt(valorParcela)}). ` +
-            `Valor total do contrato reduzido de ${brlFmt(valorAtualContrato)} para ${brlFmt(novoValorContrato)}.`
-            : `Excluiu a parcela ${ref} (${brlFmt(valorParcela)}) logicamente.`;
-
-        await registrarLog(clienteId, 'PARCELAS', logMsg);
-    }
-
-    revalidateAll(clienteId ?? undefined);
-    return { ok: true };
 }
-
 // ─────────────────────────────────────────────────────────────────────────────
 // 5. RESTAURAR PARCELA (undo soft-delete — mirror of softDeleteParcela)
 //    Adds valor_previsto back to contrato.valor_total_contrato.
 // ─────────────────────────────────────────────────────────────────────────────
 export async function restaurarParcela(id: string): Promise<ActionResult> {
     try {
+        await requireAuth();
         // Fetch context: need valor_previsto, contrato_id, and current contract total
         const { data: parcela, error: fetchError } = await supabaseAdmin
             .from('parcelas')

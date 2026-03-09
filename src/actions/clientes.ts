@@ -1,48 +1,28 @@
-'use server'
+﻿'use server'
 
 import { revalidatePath } from "next/cache";
-import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
 import { supabaseAdmin } from "@/lib/supabase";
 import { registrarLog } from "@/lib/logger";
 import { editarValorContrato } from "@/actions/contratos";
+import { requireAuth, requireAdmin } from "@/lib/authGuard";
 
 export interface ActionResult {
     ok: boolean;
     error?: string;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-async function getAuthUser() {
-    const cookieStore = await cookies();
-    const supabase = createServerClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-        { cookies: { getAll() { return cookieStore.getAll(); } } }
-    );
-    return supabase.auth.getUser();
-}
 
 function revalidateCliente(id: string) {
     revalidatePath(`/cliente/${id}`, 'page');
     revalidatePath('/consultar-clientes');
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // 1. SOFT-DELETE CLIENTE
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export async function softDeleteCliente(id: string): Promise<ActionResult> {
     try {
-        const { data: { user } } = await getAuthUser();
-        if (!user) return { ok: false, error: "Sessão expirada." };
-
-        const { data: dbUser } = await supabaseAdmin
-            .from('usuarios').select('cargo').eq('id', user.id).single();
-        if (dbUser?.cargo !== 'ADMIN' && dbUser?.cargo !== 'DIRETOR')
-            return { ok: false, error: "Sem permissão para excluir clientes." };
+        await requireAdmin();
 
         const { error } = await supabaseAdmin
             .from('clientes')
@@ -58,18 +38,12 @@ export async function softDeleteCliente(id: string): Promise<ActionResult> {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // 2. RESTAURAR CLIENTE (undo soft-delete)
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export async function restaurarCliente(id: string): Promise<ActionResult> {
     try {
-        const { data: { user } } = await getAuthUser();
-        if (!user) return { ok: false, error: "Sessão expirada." };
-
-        const { data: dbUser } = await supabaseAdmin
-            .from('usuarios').select('cargo').eq('id', user.id).single();
-        if (dbUser?.cargo !== 'ADMIN' && dbUser?.cargo !== 'DIRETOR')
-            return { ok: false, error: "Sem permissão para restaurar clientes." };
+        await requireAdmin();
 
         const { error } = await supabaseAdmin
             .from('clientes')
@@ -85,9 +59,9 @@ export async function restaurarCliente(id: string): Promise<ActionResult> {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // 3. EDITAR CLIENTE (with full JSON snapshots in audit log)
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export async function editarCliente(
     id: string,
     data: {
@@ -113,36 +87,35 @@ export async function editarCliente(
     }
 ): Promise<ActionResult> {
     try {
-        const { data: { user } } = await getAuthUser();
-        if (!user) return { ok: false, error: "Sessão expirada. Faça login novamente." };
-        if (!data.nome_cliente?.trim()) return { ok: false, error: "Nome do cliente é obrigatório." };
+        await requireAuth();
+        if (!data.nome_cliente?.trim()) return { ok: false, error: "Nome do cliente Ã© obrigatÃ³rio." };
 
-        // ── Fetch OLD state for diff + snapshot ─────────────────────────────────
+        // â”€â”€ Fetch OLD state for diff + snapshot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const { data: old, error: fetchErr } = await supabaseAdmin
             .from('clientes')
             .select('nome_cliente, empresa_label, cnpj_contrato, telefone, aniversario, pais, estado, cidade, segmento, link_asana')
             .eq('id', id)
             .single();
-        if (fetchErr || !old) return { ok: false, error: fetchErr?.message ?? "Cliente não encontrado." };
+        if (fetchErr || !old) return { ok: false, error: fetchErr?.message ?? "Cliente nÃ£o encontrado." };
 
-        // ── Build human-readable field diff ─────────────────────────────────────
+        // â”€â”€ Build human-readable field diff â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const n = (v: string | null | undefined) => v?.trim() || null;
         const mudancas: string[] = [];
         const diffStr = (label: string, o: string | null | undefined, nw: string | null | undefined) => {
-            if (n(o) !== n(nw)) mudancas.push(`${label}: '${n(o) ?? '—'}' → '${n(nw) ?? '—'}'`);
+            if (n(o) !== n(nw)) mudancas.push(`${label}: '${n(o) ?? 'â€”'}' â†’ '${n(nw) ?? 'â€”'}'`);
         };
         diffStr('Nome', old.nome_cliente, data.nome_cliente);
         diffStr('Empresa', old.empresa_label, data.empresa_label);
         diffStr('CNPJ/EIN', old.cnpj_contrato, data.cnpj_contrato);
         diffStr('Telefone', old.telefone, data.telefone);
-        diffStr('Aniversário', old.aniversario, data.aniversario);
-        diffStr('País', old.pais, data.pais);
+        diffStr('AniversÃ¡rio', old.aniversario, data.aniversario);
+        diffStr('PaÃ­s', old.pais, data.pais);
         diffStr('Estado', old.estado, data.estado);
         diffStr('Cidade', old.cidade, data.cidade);
         diffStr('Segmento', old.segmento, data.segmento);
         diffStr('Link Asana', old.link_asana, data.link_asana);
 
-        // ── Update clientes ──────────────────────────────────────────────────────
+        // â”€â”€ Update clientes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const { error: updateErr } = await supabaseAdmin
             .from('clientes')
             .update({
@@ -160,7 +133,7 @@ export async function editarCliente(
             .eq('id', id);
         if (updateErr) return { ok: false, error: updateErr.message };
 
-        // ── Optional: update operational contrato fields ─────────────────────────
+        // â”€â”€ Optional: update operational contrato fields â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if (contratoData?.contratoId && (data.agencia !== undefined || data.sdr !== undefined || data.closer !== undefined || data.programa_fechado !== undefined)) {
             const agenciaRow = data.agencia
                 ? (await supabaseAdmin.from('dim_agencias').select('id').eq('nome', data.agencia).maybeSingle()).data
@@ -183,16 +156,16 @@ export async function editarCliente(
             if (Object.keys(ct).length > 0)
                 await supabaseAdmin.from('contratos').update(ct).eq('id', contratoData.contratoId);
 
-            if (data.agencia !== undefined) mudancas.push(`Agência: '${data.agencia ?? '—'}'`);
-            if (data.sdr !== undefined) mudancas.push(`SDR: '${data.sdr ?? '—'}'`);
-            if (data.closer !== undefined) mudancas.push(`Closer: '${data.closer ?? '—'}'`);
-            if (data.programa_fechado !== undefined) mudancas.push(`Programa: '${data.programa_fechado ?? '—'}'`);
+            if (data.agencia !== undefined) mudancas.push(`AgÃªncia: '${data.agencia ?? 'â€”'}'`);
+            if (data.sdr !== undefined) mudancas.push(`SDR: '${data.sdr ?? 'â€”'}'`);
+            if (data.closer !== undefined) mudancas.push(`Closer: '${data.closer ?? 'â€”'}'`);
+            if (data.programa_fechado !== undefined) mudancas.push(`Programa: '${data.programa_fechado ?? 'â€”'}'`);
         }
 
-        // ── Audit log with full JSON snapshots ──────────────────────────────────
+        // â”€â”€ Audit log with full JSON snapshots â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const logMsg = mudancas.length > 0
             ? `Editou cliente: ${mudancas.join(' | ')}`
-            : 'Editou cliente (sem mudanças detectadas)';
+            : 'Editou cliente (sem mudanÃ§as detectadas)';
 
         await registrarLog(
             id,
@@ -202,7 +175,7 @@ export async function editarCliente(
             data as Record<string, unknown>      // dadosNovos
         );
 
-        // ── Optional: financial recalculation ───────────────────────────────────
+        // â”€â”€ Optional: financial recalculation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if (contratoData) {
             const { contratoId, novoValorContrato } = contratoData;
             const { data: ct } = await supabaseAdmin
@@ -210,7 +183,7 @@ export async function editarCliente(
             const currentTotal = Number((ct as any)?.valor_total_contrato ?? NaN);
             if (!isNaN(currentTotal) && Math.abs(novoValorContrato - currentTotal) > 0.01) {
                 const result = await editarValorContrato(contratoId, novoValorContrato);
-                if (!result.ok) return { ok: false, error: `Dados salvos, mas falha no recálculo: ${result.error}` };
+                if (!result.ok) return { ok: false, error: `Dados salvos, mas falha no recÃ¡lculo: ${result.error}` };
             }
         }
 
