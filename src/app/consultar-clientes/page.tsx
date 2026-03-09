@@ -1,4 +1,7 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
+import { createServerClient } from "@supabase/ssr";
 import { Plus, ChevronRight, SlidersHorizontal, X } from "lucide-react";
 import { supabaseAdmin } from "@/lib/supabase";
 import KpiCard from "@/components/KpiCard";
@@ -12,9 +15,10 @@ interface ProcessedClient {
     nomeCliente: string;
     empresaLabel: string | null;
     valorTotalAtivo: number;
-    proximoVencimento: string | null; // "YYYY-MM-DD"
+    proximoVencimento: string | null;
     status: ClientStatus;
     tipoContrato: string | null;
+    deletedAt: string | null;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -57,13 +61,34 @@ export default async function ConsultarClientesPage({
     const currentQ = (params?.q ?? "").toLowerCase().trim();
     const todayStr = toDateStr(new Date());
 
+    // ── Auth + role ───────────────────────────────────────────────────────────
+    const cookieStore = await cookies();
+    const supabaseSSR = createServerClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        { cookies: { getAll() { return cookieStore.getAll(); } } }
+    );
+    const { data: { user } } = await supabaseSSR.auth.getUser();
+    if (!user) redirect('/login');
+
+    const { data: currentUser } = await supabaseAdmin
+        .from('usuarios').select('cargo').eq('id', user.id).single();
+    const isAdmin = currentUser?.cargo === 'ADMIN' || currentUser?.cargo === 'DIRETOR';
+
     // ── Fetch ─────────────────────────────────────────────────────────────────
-    const { data: clientsData, error } = await supabaseAdmin
+    let query = supabaseAdmin
         .from("clientes")
         .select(
-            "id, nome_cliente, empresa_label, contratos(id, tipo_contrato, valor_total_contrato, parcelas(data_vencimento, status_manual_override, valor_previsto))"
+            "id, nome_cliente, empresa_label, deleted_at, contratos(id, tipo_contrato, valor_total_contrato, parcelas(data_vencimento, status_manual_override, valor_previsto))"
         )
         .order("nome_cliente", { ascending: true });
+
+    // Non-admins only see active (non-deleted) clients
+    if (!isAdmin) {
+        query = query.is('deleted_at', null);
+    }
+
+    const { data: clientsData, error } = await query;
 
     if (error) {
         console.error("[ConsultarClientes] Supabase error:", error.message);
@@ -129,6 +154,7 @@ export default async function ConsultarClientesPage({
                 proximoVencimento,
                 status,
                 tipoContrato,
+                deletedAt: (c as any).deleted_at as string | null,
             };
         }
     );
@@ -314,8 +340,13 @@ export default async function ConsultarClientesPage({
                                     >
                                         {/* Cliente / Empresa */}
                                         <td className="px-6 py-4">
-                                            <p className="text-sm font-semibold text-white leading-tight">
+                                            <p className="text-sm font-semibold text-white leading-tight flex items-center gap-2">
                                                 {client.nomeCliente}
+                                                {client.deletedAt && (
+                                                    <span className="px-1.5 py-0.5 text-[9px] font-black uppercase tracking-widest rounded bg-red-500/15 border border-red-500/30 text-red-400 shrink-0">
+                                                        EXCLUÍDO
+                                                    </span>
+                                                )}
                                             </p>
                                             {client.empresaLabel && (
                                                 <p className="text-[11px] text-gray-500 mt-0.5">

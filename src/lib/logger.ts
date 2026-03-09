@@ -18,14 +18,24 @@ export async function registrarLog(registroId: string, tabela: string, acao: str
         )
 
         const { data: { user } } = await supabase.auth.getUser()
-        const email = user?.email || 'Sistema Automático'
 
-        // Admin client bypasses RLS on insert
+        // Resolve display name: prefer nome from usuarios table, fall back to email, then system
+        let nomeUsuario = 'Sistema Automático';
+        if (user) {
+            const { data: dbUser } = await supabaseAdmin
+                .from('usuarios')
+                .select('nome')
+                .eq('id', user.id)
+                .single();
+            nomeUsuario = dbUser?.nome || user.email || 'Sistema Automático';
+        }
+
+        // Stored in the `usuario_email` text column (holds name for display)
         await supabaseAdmin.from('atividades_log').insert({
             registro_id: registroId,
             tabela_afetada: tabela,
             acao: acao,
-            usuario_email: email,
+            usuario_email: nomeUsuario,
         })
 
     } catch (error) {

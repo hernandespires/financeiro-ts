@@ -1,10 +1,13 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { cookies } from "next/headers";
+import { createServerClient } from "@supabase/ssr";
 import { ChevronLeft, Building2, CalendarClock, TrendingDown, Activity, MessageSquare } from "lucide-react";
 import { supabaseAdmin } from "@/lib/supabase";
 import ParcelaActions from "@/components/ParcelaActions";
 import CommentForm from "@/components/CommentForm";
 import RiskBadge, { riskConfig, RiskStatus } from "@/components/RiskBadge";
+import ClienteActions from "@/components/ClienteActions";
 import { brl, toDateStr, daysLate, fmtDate } from "@/lib/utils";
 
 
@@ -65,22 +68,39 @@ export default async function ClienteDetailPage({
     const activeTab = tab || "financeiro";
     const todayStr = toDateStr(new Date());
 
+    // ── Auth + role ───────────────────────────────────────────────────────────
+    const cookieStore = await cookies();
+    const supabaseSSR = createServerClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        { cookies: { getAll() { return cookieStore.getAll(); } } }
+    );
+    const { data: { user } } = await supabaseSSR.auth.getUser();
+    if (!user) redirect('/login');
+
+    const { data: dbUser } = await supabaseAdmin
+        .from('usuarios').select('cargo').eq('id', user.id).single();
+    const isAdmin = dbUser?.cargo === 'ADMIN' || dbUser?.cargo === 'DIRETOR';
+
     // ── Parallel Fetch ────────────────────────────────────────────────────────
     const [clientRes, comentariosRes, logsRes] = await Promise.all([
         supabaseAdmin
             .from("clientes")
             .select(
                 `id, nome_cliente, empresa_label, cnpj_contrato, telefone, segmento, created_at,
+                 aniversario, pais, estado, cidade, link_asana,
                  contratos(
                    id, tipo_contrato, valor_total_contrato, parcelas_total, periodicidade, forma_pagamento,
-                   parcelas(id, data_vencimento, valor_previsto, status_manual_override, observacao, tipo_parcela, numero_referencia, sub_indice)
+                   cnpj_vinculado,
+                   dim_agencias(nome), dim_equipe_sdr:dim_equipe!sdr_id(nome), dim_equipe_closer:dim_equipe!closer_id(nome),
+                   parcelas(id, data_vencimento, valor_previsto, status_manual_override, observacao, tipo_parcela, numero_referencia, sub_indice, deleted_at, pagamentos(data_pagamento))
                  )`
             )
             .eq("id", id)
             .single(),
         supabaseAdmin
             .from('comentarios_clientes')
-            .select('*')
+            .select('*, usuarios(nome, avatar_url, cargo)')
             .eq('cliente_id', id)
             .order('created_at', { ascending: false }),
         supabaseAdmin
@@ -96,11 +116,24 @@ export default async function ClienteDetailPage({
     }
 
     const clientData = clientRes.data;
-    const comentarios = comentariosRes.data || [];
+
+    type Comentario = {
+        id: string;
+        created_at: string;
+        comentario: string;
+        usuario_id: string | null;
+        usuarios: {
+            nome: string | null;
+            avatar_url: string | null;
+            cargo: string | null;
+        } | null;
+    };
+
+    const comentarios: Comentario[] = (comentariosRes.data || []) as Comentario[];
     const logs = logsRes.data || [];
 
     // ── Type narrowing ────────────────────────────────────────────────────────
-    const cliente = clientData as {
+    const cliente = (clientData as unknown) as {
         id: string;
         nome_cliente: string;
         empresa_label: string | null;
@@ -108,12 +141,22 @@ export default async function ClienteDetailPage({
         telefone: string | null;
         segmento: string | null;
         created_at: string;
+        aniversario: string | null;
+        pais: string | null;
+        estado: string | null;
+        cidade: string | null;
+        link_asana: string | null;
         contratos: {
             id: string;
             tipo_contrato: string | null;
             valor_total_contrato: number;
             parcelas_total: number;
             periodicidade: string | null;
+            cnpj_vinculado: string | null;
+            // Supabase returns FK joins as arrays
+            dim_agencias: { nome: string }[] | null;
+            dim_equipe_sdr: { nome: string }[] | null;
+            dim_equipe_closer: { nome: string }[] | null;
             parcelas: {
                 id: string;
                 data_vencimento: string;
@@ -123,11 +166,14 @@ export default async function ClienteDetailPage({
                 tipo_parcela: string | null;
                 numero_referencia: number;
                 sub_indice: number | null;
+                deleted_at: string | null;
+                pagamentos: { data_pagamento: string }[];
             }[];
         }[];
     };
 
     const contratos = cliente.contratos ?? [];
+    const primeiroContrato = contratos[0] ?? null;
 
     // ── Cross-default risk ────────────────────────────────────────────────────
     const openParcelas = contratos.flatMap((ct) =>
@@ -160,25 +206,37 @@ export default async function ClienteDetailPage({
         tipo_parcela: string | null;
         numero_referencia: number;
         sub_indice: number | null;
+        deleted_at: string | null;
         contratoId: string;
         tipoContrato: string | null;
         forma_pagamento_contrato: string | null;
         index: number;
         total: number;
+        dataPagamento: string | null;  // from pagamentos join
+        hasPagamento: boolean;         // true = pagamentos record exists
     };
 
     const allParcelas: FlatParcela[] = contratos.flatMap((ct) =>
         (ct.parcelas ?? [])
+            .filter((p) => !p.deleted_at)  // exclude soft-deleted
             .slice()
             .sort((a, b) => a.data_vencimento.localeCompare(b.data_vencimento))
-            .map((p, i) => ({
-                ...p,
-                contratoId: ct.id,
-                tipoContrato: ct.tipo_contrato,
-                forma_pagamento_contrato: (ct as any).forma_pagamento ?? null,
-                index: i + 1,
-                total: ct.parcelas_total ?? ct.parcelas.length,
-            }))
+            .map((p, i) => {
+                const pags = p.pagamentos as unknown;
+                const dataPagamento = Array.isArray(pags)
+                    ? ((pags as { data_pagamento: string }[])[0]?.data_pagamento ?? null)
+                    : ((pags as { data_pagamento: string } | null)?.data_pagamento ?? null);
+                return {
+                    ...p,
+                    contratoId: ct.id,
+                    tipoContrato: ct.tipo_contrato,
+                    forma_pagamento_contrato: (ct as any).forma_pagamento ?? null,
+                    index: i + 1,
+                    total: ct.parcelas_total ?? ct.parcelas.length,
+                    dataPagamento,
+                    hasPagamento: dataPagamento !== null,
+                };
+            })
     );
 
     // Sort globally by due date
@@ -201,14 +259,37 @@ export default async function ClienteDetailPage({
                 <span className="text-orange-500 font-semibold">Ficha do Cliente</span>
             </nav>
 
-            {/* Back button */}
-            <Link
-                href="/consultar-clientes"
-                className="self-start flex items-center gap-2 rounded-xl bg-white/5 border border-white/10 hover:border-orange-500 text-gray-400 hover:text-orange-400 px-4 py-2 text-xs font-medium transition-all"
-            >
-                <ChevronLeft size={14} />
-                Voltar para clientes
-            </Link>
+            {/* Back button + Client action buttons */}
+            <div className="flex items-center justify-between gap-4">
+                <Link
+                    href="/consultar-clientes"
+                    className="flex items-center gap-2 rounded-xl bg-white/5 border border-white/10 hover:border-orange-500 text-gray-400 hover:text-orange-400 px-4 py-2 text-xs font-medium transition-all shrink-0"
+                >
+                    <ChevronLeft size={14} />
+                    Voltar para clientes
+                </Link>
+                <ClienteActions
+                    clienteId={cliente.id}
+                    isAdmin={isAdmin}
+                    // ClienteEditData fields:
+                    nome_cliente={cliente.nome_cliente}
+                    empresa_label={cliente.empresa_label}
+                    cnpj_contrato={cliente.cnpj_contrato}
+                    telefone={cliente.telefone}
+                    aniversario={cliente.aniversario}
+                    pais={cliente.pais}
+                    estado={cliente.estado}
+                    cidade={cliente.cidade}
+                    segmento={cliente.segmento}
+                    link_asana={cliente.link_asana}
+                    contratoId={primeiroContrato?.id ?? null}
+                    valorTotalContrato={primeiroContrato?.valor_total_contrato ?? null}
+                    agencia={primeiroContrato?.dim_agencias?.[0]?.nome ?? null}
+                    sdr={primeiroContrato?.dim_equipe_sdr?.[0]?.nome ?? null}
+                    closer={primeiroContrato?.dim_equipe_closer?.[0]?.nome ?? null}
+                    cnpjVinculado={primeiroContrato?.cnpj_vinculado ?? null}
+                />
+            </div>
 
             {/* Profile Hero Card */}
             <div
@@ -353,6 +434,9 @@ export default async function ClienteDetailPage({
                                     <th className="text-center px-6 py-3 text-[10px] font-semibold text-orange-500 uppercase tracking-widest">
                                         Vencimento
                                     </th>
+                                    <th className="text-center px-6 py-3 text-[10px] font-semibold text-orange-500 uppercase tracking-widest">
+                                        Pagamento
+                                    </th>
                                     <th className="text-right px-6 py-3 text-[10px] font-semibold text-orange-500 uppercase tracking-widest">
                                         Valor
                                     </th>
@@ -368,7 +452,7 @@ export default async function ClienteDetailPage({
                                 {allParcelas.length === 0 ? (
                                     <tr>
                                         <td
-                                            colSpan={6}
+                                            colSpan={7}
                                             className="text-center py-14 text-gray-600 text-sm"
                                         >
                                             <span className="text-3xl block mb-2">📭</span>
@@ -423,6 +507,17 @@ export default async function ClienteDetailPage({
                                                     </span>
                                                 </td>
 
+                                                {/* Pagamento */}
+                                                <td className="px-6 py-3.5 text-center">
+                                                    {p.dataPagamento ? (
+                                                        <span className="text-xs font-medium text-green-400">
+                                                            {fmtDate(p.dataPagamento)}
+                                                        </span>
+                                                    ) : (
+                                                        <span className="text-xs text-gray-600">—</span>
+                                                    )}
+                                                </td>
+
                                                 {/* Valor */}
                                                 <td className="px-6 py-3.5 text-right">
                                                     <span className="text-sm font-semibold text-white">
@@ -449,6 +544,8 @@ export default async function ClienteDetailPage({
                                                         sub_indice: p.sub_indice,
                                                         forma_pagamento_contrato: p.forma_pagamento_contrato ?? undefined,
                                                         observacao: p.observacao,
+                                                        data_vencimento: p.data_vencimento,
+                                                        hasPagamento: p.hasPagamento,
                                                     }} />
                                                 </td>
                                             </tr>
@@ -507,15 +604,37 @@ export default async function ClienteDetailPage({
                                         Nenhum comentário adicionado.
                                     </p>
                                 ) : (
-                                    comentarios.map((c: any) => (
-                                        <div key={c.id} className="flex flex-col bg-white/[0.02] backdrop-blur-xl border border-white/10 p-4 rounded-xl rounded-tr-sm shadow-lg">
-                                            <div className="flex items-center justify-between mb-2">
-                                                <span className="text-[10px] font-bold text-orange-500 uppercase tracking-wider">{c.usuario_nome}</span>
-                                                <span className="text-[10px] text-gray-500">{new Date(c.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</span>
+                                    comentarios.map((c) => {
+                                        const nome = c.usuarios?.nome ?? 'Usuário';
+                                        const avatarUrl = c.usuarios?.avatar_url;
+                                        const isAdmin = c.usuarios?.cargo === 'ADMIN';
+                                        const inicial = nome.charAt(0).toUpperCase();
+                                        return (
+                                            <div key={c.id} className="flex flex-col bg-white/[0.02] backdrop-blur-xl border border-white/10 p-4 rounded-xl rounded-tr-sm shadow-lg">
+                                                <div className="flex items-center justify-between mb-3">
+                                                    <div className="flex items-center gap-2">
+                                                        {/* Avatar */}
+                                                        <div className="w-7 h-7 rounded-full bg-orange-500/20 border border-orange-500/40 flex items-center justify-center overflow-hidden shrink-0">
+                                                            {avatarUrl ? (
+                                                                <img src={avatarUrl} alt={nome} className="w-full h-full object-cover" />
+                                                            ) : (
+                                                                <span className="text-[10px] font-black text-orange-400">{inicial}</span>
+                                                            )}
+                                                        </div>
+                                                        {/* Name + badge */}
+                                                        <span className="text-[11px] font-bold text-orange-400 uppercase tracking-wider">{nome}</span>
+                                                        {isAdmin && (
+                                                            <span className="px-1.5 py-0.5 text-[9px] font-black uppercase tracking-widest rounded bg-orange-500/15 border border-orange-500/30 text-orange-400">
+                                                                ADMIN
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <span className="text-[10px] text-gray-500">{new Date(c.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</span>
+                                                </div>
+                                                <p className="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">{c.comentario}</p>
                                             </div>
-                                            <p className="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">{c.comentario}</p>
-                                        </div>
-                                    ))
+                                        );
+                                    })
                                 )}
                             </div>
                             <CommentForm clienteId={id} />

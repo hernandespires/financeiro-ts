@@ -2,8 +2,8 @@
 
 import { useState, useTransition, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { Check, GitBranch, Loader2, X, CreditCard, Scissors } from "lucide-react";
-import { registrarPagamentoCompleto, desmembrarParcela } from "@/actions/parcelas";
+import { Check, GitBranch, Loader2, X, CreditCard, Scissors, Pencil, Trash2, AlertTriangle } from "lucide-react";
+import { registrarPagamentoCompleto, desmembrarParcela, editarParcela, softDeleteParcela } from "@/actions/parcelas";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface ParcelaForActions {
@@ -14,6 +14,8 @@ export interface ParcelaForActions {
     sub_indice?: number | null;
     forma_pagamento_contrato?: string;
     observacao?: string | null;
+    data_vencimento?: string;
+    hasPagamento?: boolean; // true = already paid in pagamentos table, hides edit/delete
 }
 
 interface ParcelaActionsProps {
@@ -298,10 +300,133 @@ function SplitModal({
     );
 }
 
+// ─── Edit Parcela Modal ───────────────────────────────────────────────────────
+function EditParcelaModal({
+    parcela,
+    onClose,
+}: {
+    parcela: ParcelaForActions;
+    onClose: () => void;
+}) {
+    const [valor, setValor] = useState(parcela.valor_previsto.toFixed(2));
+    const [dataVenc, setDataVenc] = useState(parcela.data_vencimento ?? todayISO());
+    const [isPending, startTransition] = useTransition();
+    const [error, setError] = useState<string | null>(null);
+
+    function handleSalvar() {
+        setError(null);
+        const val = parseFloat(valor);
+        if (isNaN(val) || val <= 0) { setError("Informe um valor válido."); return; }
+        if (!dataVenc) { setError("Informe a data de vencimento."); return; }
+        startTransition(async () => {
+            const res = await editarParcela(parcela.id, val, dataVenc);
+            if (res.ok) {
+                onClose();
+            } else {
+                setError(res.error ?? "Erro desconhecido.");
+            }
+        });
+    }
+
+    return (
+        <Modal onClose={onClose}>
+            <div className="flex items-center gap-3">
+                <span className="flex items-center justify-center w-9 h-9 rounded-xl bg-blue-500/10 text-blue-400 shrink-0">
+                    <Pencil size={16} />
+                </span>
+                <div>
+                    <h2 className="text-base font-bold text-white">Editar Parcela</h2>
+                    <p className="text-xs text-gray-500">Reajuste valor ou data de vencimento</p>
+                </div>
+            </div>
+
+            <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-1.5">
+                    <label className={labelCls}>Novo Valor (R$)</label>
+                    <input type="number" min="0.01" step="0.01" value={valor} onChange={e => setValor(e.target.value)} className={inputCls} />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                    <label className={labelCls}>Nova Data de Vencimento</label>
+                    <input type="date" value={dataVenc} onChange={e => setDataVenc(e.target.value)} className={inputCls} />
+                </div>
+                {error && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{error}</p>}
+            </div>
+
+            <div className="flex gap-3 justify-end">
+                <button onClick={onClose} disabled={isPending} className="rounded-xl border border-white/10 hover:border-white/20 text-gray-400 hover:text-white px-4 py-2 text-sm font-medium transition-all disabled:opacity-50">Cancelar</button>
+                <button onClick={handleSalvar} disabled={isPending} className="inline-flex items-center gap-2 rounded-xl bg-blue-500 hover:bg-blue-400 text-white px-5 py-2 text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                    {isPending ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} strokeWidth={2.5} />}
+                    {isPending ? "Salvando…" : "Salvar"}
+                </button>
+            </div>
+        </Modal>
+    );
+}
+
+// ─── Delete Parcela Modal ─────────────────────────────────────────────────────
+function DeleteParcelaModal({
+    parcela,
+    onClose,
+}: {
+    parcela: ParcelaForActions;
+    onClose: () => void;
+}) {
+    const [isPending, startTransition] = useTransition();
+    const [error, setError] = useState<string | null>(null);
+
+    function handleConfirmar() {
+        setError(null);
+        startTransition(async () => {
+            const res = await softDeleteParcela(parcela.id);
+            if (res.ok) {
+                onClose();
+            } else {
+                setError(res.error ?? "Erro desconhecido.");
+            }
+        });
+    }
+
+    const ref = parcela.sub_indice
+        ? `${parcela.numero_referencia}-${parcela.sub_indice}`
+        : `${parcela.numero_referencia}`;
+
+    return (
+        <Modal onClose={onClose}>
+            <div className="flex items-center gap-3">
+                <span className="flex items-center justify-center w-9 h-9 rounded-xl bg-red-500/10 text-red-400 shrink-0">
+                    <AlertTriangle size={16} />
+                </span>
+                <div>
+                    <h2 className="text-base font-bold text-white">Excluir Parcela #{ref}</h2>
+                    <p className="text-xs text-gray-500">Esta ação pode ser revertida pelo admin</p>
+                </div>
+            </div>
+
+            <div className="rounded-xl bg-red-500/5 border border-red-500/20 p-4">
+                <p className="text-sm text-gray-300 leading-relaxed">
+                    A parcela de <strong className="text-white">{brl(parcela.valor_previsto)}</strong> será marcada como excluída logicamente e removida da listagem.
+                </p>
+            </div>
+
+            {error && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{error}</p>}
+
+            <div className="flex gap-3 justify-end">
+                <button onClick={onClose} disabled={isPending} className="rounded-xl border border-white/10 hover:border-white/20 text-gray-400 hover:text-white px-4 py-2 text-sm font-medium transition-all disabled:opacity-50">Cancelar</button>
+                <button onClick={handleConfirmar} disabled={isPending} className="inline-flex items-center gap-2 rounded-xl bg-red-500 hover:bg-red-400 text-white px-5 py-2 text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                    {isPending ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                    {isPending ? "Excluindo…" : "Confirmar"}
+                </button>
+            </div>
+        </Modal>
+    );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
     const [isPaymentOpen, setIsPaymentOpen] = useState(false);
     const [isSplitOpen, setIsSplitOpen] = useState(false);
+    const [isEditOpen, setIsEditOpen] = useState(false);
+    const [isDeleteOpen, setIsDeleteOpen] = useState(false);
     const [localPago, setLocalPago] = useState(parcela.status_manual_override === "PAGO");
     const [mounted, setMounted] = useState(false);
 
@@ -309,6 +434,9 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
 
     const isPago = localPago;
     const isNormal = parcela.status_manual_override === "NORMAL";
+    const showEditDelete = isNormal && !parcela.hasPagamento;
+    // Only root installments (sub_indice === null or 0) can be split
+    const showSplit = isNormal && (parcela.sub_indice === null || parcela.sub_indice === undefined || parcela.sub_indice === 0);
 
     // Already paid
     if (isPago) {
@@ -332,7 +460,7 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
     return (
         <>
             {/* Action buttons */}
-            <div className="inline-flex items-center gap-1.5">
+            <div className="inline-flex items-center gap-1.5 flex-wrap justify-center">
                 {/* Dar Baixa */}
                 <button
                     onClick={() => setIsPaymentOpen(true)}
@@ -343,15 +471,39 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
                     Dar Baixa
                 </button>
 
-                {/* Dividir */}
-                <button
-                    onClick={() => setIsSplitOpen(true)}
-                    title="Desmembrar parcela"
-                    className="inline-flex items-center gap-1 rounded-lg bg-orange-500/10 border border-orange-500/20 hover:bg-orange-500/20 hover:border-orange-500/40 text-orange-400 px-2.5 py-1.5 text-[11px] font-semibold transition-all"
-                >
-                    <GitBranch size={11} strokeWidth={2} />
-                    Dividir
-                </button>
+                {/* Dividir — hidden for sub-installments (4-1, 4-2, …) */}
+                {showSplit && (
+                    <button
+                        onClick={() => setIsSplitOpen(true)}
+                        title="Desmembrar parcela"
+                        className="inline-flex items-center gap-1 rounded-lg bg-orange-500/10 border border-orange-500/20 hover:bg-orange-500/20 hover:border-orange-500/40 text-orange-400 px-2.5 py-1.5 text-[11px] font-semibold transition-all"
+                    >
+                        <GitBranch size={11} strokeWidth={2} />
+                        Dividir
+                    </button>
+                )}
+
+                {/* Edit — only for unpaid (no pagamento record) */}
+                {showEditDelete && (
+                    <button
+                        onClick={() => setIsEditOpen(true)}
+                        title="Editar parcela"
+                        className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-blue-500/10 border border-blue-500/20 hover:bg-blue-500/20 hover:border-blue-500/40 text-blue-400 transition-all"
+                    >
+                        <Pencil size={11} />
+                    </button>
+                )}
+
+                {/* Delete — only for unpaid */}
+                {showEditDelete && (
+                    <button
+                        onClick={() => setIsDeleteOpen(true)}
+                        title="Excluir parcela"
+                        className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-red-500/10 border border-red-500/20 hover:bg-red-500/20 hover:border-red-500/40 text-red-400 transition-all"
+                    >
+                        <Trash2 size={11} />
+                    </button>
+                )}
             </div>
 
             {/* Modals — portaled to document.body to escape table/backdrop-blur clipping */}
@@ -367,6 +519,18 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
                     parcela={parcela}
                     onClose={() => setIsSplitOpen(false)}
                     onSuccess={() => setIsSplitOpen(false)}
+                />
+            )}
+            {mounted && isEditOpen && (
+                <EditParcelaModal
+                    parcela={parcela}
+                    onClose={() => setIsEditOpen(false)}
+                />
+            )}
+            {mounted && isDeleteOpen && (
+                <DeleteParcelaModal
+                    parcela={parcela}
+                    onClose={() => setIsDeleteOpen(false)}
                 />
             )}
         </>
