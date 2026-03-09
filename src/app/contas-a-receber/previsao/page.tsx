@@ -9,7 +9,8 @@ import {
     Clock,
 } from "lucide-react";
 import { supabaseAdmin } from "@/lib/supabase";
-import { brl, fmtDate } from "@/lib/utils";
+import { brl, fmtDate, toDateStr } from "@/lib/utils";
+import { isParcelaValidaParaPrevisao } from "@/lib/financeRules";
 
 export default async function PrevisaoCaixaPage({
     searchParams,
@@ -21,9 +22,10 @@ export default async function PrevisaoCaixaPage({
     const selectedPlataforma = params.plataforma;
 
     const today = new Date();
+    const todayStr = toDateStr(today);
     const currentDate =
         params.date ??
-        `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+        `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "00")}`;
     const [year, month] = currentDate.split("-");
 
     // ── Date range ─────────────────────────────────────────────────────────────
@@ -59,13 +61,17 @@ export default async function PrevisaoCaixaPage({
     const { data: parcelasData } = await supabaseAdmin
         .from("parcelas")
         .select(
-            "id, valor_previsto, status_manual_override, data_disponibilidade_prevista, data_vencimento, contratos(forma_pagamento, clientes(nome_cliente))"
+            "id, valor_previsto, status_manual_override, data_disponibilidade_prevista, data_vencimento, deleted_at, contratos(deleted_at, forma_pagamento, clientes(nome_cliente, deleted_at))"
         )
+        .is("deleted_at", null)             // exclude soft-deleted at DB level
         .gte("data_disponibilidade_prevista", startDate)
         .lte("data_disponibilidade_prevista", endDate)
         .order("data_disponibilidade_prevista", { ascending: true });
 
-    const parcelas = parcelasData ?? [];
+    // Apply strict forecast eligibility — also catches cascade-deleted parents
+    const parcelas = (parcelasData ?? []).filter((p) =>
+        isParcelaValidaParaPrevisao(p, todayStr)
+    );
 
     // ── Aggregate KPIs & per-platform buckets ─────────────────────────────────
     let totalCaixa = 0;

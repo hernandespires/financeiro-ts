@@ -1,5 +1,15 @@
 import { CheckCircle, Clock, AlertCircle, ShieldAlert } from "lucide-react";
+import { getRiskStatus, calcularDiasAtraso } from "@/lib/financeRules";
 
+// ─── Re-export financeRules types so existing imports keep working ─────────────
+export type { RiskLevel } from "@/lib/financeRules";
+export { getRiskStatus } from "@/lib/financeRules";
+
+/**
+ * Maps the overdue risk level to the RiskBadge display string.
+ * "EM DIA" / "ATRASO" / "INADIMPLENTE" / "PERDA" align 1-to-1 with
+ * the RiskLevel type from financeRules — this union adds "CONCLUÍDO".
+ */
 export type RiskStatus = "EM DIA" | "ATRASO" | "INADIMPLENTE" | "PERDA" | "CONCLUÍDO";
 
 interface RiskConfig {
@@ -42,6 +52,25 @@ export const riskConfig: Record<RiskStatus, RiskConfig> = {
     },
 };
 
+/**
+ * Derive the visual RiskStatus for a client/contract given its most-overdue
+ * installment. Uses the central `getRiskStatus` rule from financeRules.ts.
+ *
+ * @param maxDueDate "YYYY-MM-DD" of the oldest unpaid installment
+ * @param todayStr   Current date as "YYYY-MM-DD"
+ * @param allPaid    Pass `true` when all installments are PAGO → returns "CONCLUÍDO"
+ */
+export function deriveClientRiskStatus(
+    maxDueDate: string | null,
+    todayStr: string,
+    allPaid: boolean = false
+): RiskStatus {
+    if (allPaid) return "CONCLUÍDO";
+    if (!maxDueDate) return "EM DIA";
+    const dias = calcularDiasAtraso(maxDueDate, todayStr);
+    return getRiskStatus(dias) as RiskStatus;
+}
+
 interface RiskBadgeProps {
     status: RiskStatus;
     /** When true, renders the large pill used in the hero card header */
@@ -61,3 +90,4 @@ export default function RiskBadge({ status, size = "sm" }: RiskBadgeProps) {
         </span>
     );
 }
+

@@ -8,6 +8,7 @@ import ParcelaActions from "@/components/ParcelaActions";
 import CommentForm from "@/components/CommentForm";
 import RiskBadge, { riskConfig, RiskStatus } from "@/components/RiskBadge";
 import ClienteActions from "@/components/ClienteActions";
+import RestaurarParcelaBtn from "@/components/RestaurarParcelaBtn";
 import { brl, toDateStr, daysLate, fmtDate } from "@/lib/utils";
 
 
@@ -88,7 +89,7 @@ export default async function ClienteDetailPage({
             .from("clientes")
             .select(
                 `id, nome_cliente, empresa_label, cnpj_contrato, telefone, segmento, created_at,
-                 aniversario, pais, estado, cidade, link_asana,
+                 aniversario, pais, estado, cidade, link_asana, deleted_at,
                  contratos(
                    id, tipo_contrato, valor_total_contrato, parcelas_total, periodicidade, forma_pagamento,
                    cnpj_vinculado,
@@ -146,6 +147,7 @@ export default async function ClienteDetailPage({
         estado: string | null;
         cidade: string | null;
         link_asana: string | null;
+        deleted_at: string | null;
         contratos: {
             id: string;
             tipo_contrato: string | null;
@@ -218,7 +220,7 @@ export default async function ClienteDetailPage({
 
     const allParcelas: FlatParcela[] = contratos.flatMap((ct) =>
         (ct.parcelas ?? [])
-            .filter((p) => !p.deleted_at)  // exclude soft-deleted
+            .filter((p) => isAdmin ? true : !p.deleted_at)  // admins see soft-deleted rows
             .slice()
             .sort((a, b) => a.data_vencimento.localeCompare(b.data_vencimento))
             .map((p, i) => {
@@ -288,6 +290,7 @@ export default async function ClienteDetailPage({
                     sdr={primeiroContrato?.dim_equipe_sdr?.[0]?.nome ?? null}
                     closer={primeiroContrato?.dim_equipe_closer?.[0]?.nome ?? null}
                     cnpjVinculado={primeiroContrato?.cnpj_vinculado ?? null}
+                    isDeleted={!!cliente.deleted_at}
                 />
             </div>
 
@@ -461,20 +464,22 @@ export default async function ClienteDetailPage({
                                     </tr>
                                 ) : (
                                     allParcelas.map((p) => {
+                                        const isDeleted = !!p.deleted_at;
                                         const isPago = p.status_manual_override === "PAGO";
-                                        const isActionable = p.status_manual_override === "NORMAL";
 
                                         return (
                                             <tr
                                                 key={p.id}
-                                                className={`border-b border-white/5 last:border-0 transition-colors ${isPago
-                                                    ? "opacity-50 hover:opacity-70"
-                                                    : "hover:bg-white/[0.03]"
+                                                className={`border-b border-white/5 last:border-0 transition-colors ${isDeleted
+                                                    ? "opacity-40 bg-red-500/5"
+                                                    : isPago
+                                                        ? "opacity-50 hover:opacity-70"
+                                                        : "hover:bg-white/[0.03]"
                                                     }`}
                                             >
                                                 {/* # parcela */}
                                                 <td className="px-6 py-3.5">
-                                                    <span className="text-xs font-mono text-gray-400">
+                                                    <span className={`text-xs font-mono ${isDeleted ? "line-through text-red-400" : "text-gray-400"}`}>
                                                         {p.numero_referencia}
                                                         {p.sub_indice != null && p.sub_indice > 0 && (
                                                             <span className="text-orange-400">-{p.sub_indice}</span>
@@ -484,7 +489,7 @@ export default async function ClienteDetailPage({
 
                                                 {/* Tipo / Obs */}
                                                 <td className="px-6 py-3.5">
-                                                    <p className="text-xs font-medium text-orange-400">
+                                                    <p className={`text-xs font-medium ${isDeleted ? "line-through text-red-400/70" : "text-orange-400"}`}>
                                                         {p.tipo_parcela ?? p.tipoContrato ?? "—"}
                                                     </p>
                                                     {p.observacao && (
@@ -497,10 +502,11 @@ export default async function ClienteDetailPage({
                                                 {/* Vencimento */}
                                                 <td className="px-6 py-3.5 text-center">
                                                     <span
-                                                        className={`text-xs font-medium ${!isPago &&
-                                                            daysLate(p.data_vencimento, todayStr) > 0
-                                                            ? "text-red-400"
-                                                            : "text-gray-300"
+                                                        className={`text-xs font-medium ${isDeleted
+                                                            ? "line-through text-red-400/60"
+                                                            : !isPago && daysLate(p.data_vencimento, todayStr) > 0
+                                                                ? "text-red-400"
+                                                                : "text-gray-300"
                                                             }`}
                                                     >
                                                         {fmtDate(p.data_vencimento)}
@@ -520,33 +526,43 @@ export default async function ClienteDetailPage({
 
                                                 {/* Valor */}
                                                 <td className="px-6 py-3.5 text-right">
-                                                    <span className="text-sm font-semibold text-white">
+                                                    <span className={`text-sm font-semibold ${isDeleted ? "line-through text-red-400/60" : "text-white"}`}>
                                                         {brl(p.valor_previsto)}
                                                     </span>
                                                 </td>
 
                                                 {/* Status badge */}
                                                 <td className="px-6 py-3.5 text-center">
-                                                    <ParcelBadge
-                                                        status={p.status_manual_override}
-                                                        dueDate={p.data_vencimento}
-                                                        todayStr={todayStr}
-                                                    />
+                                                    {isDeleted ? (
+                                                        <span className="inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide bg-red-500/10 text-red-400 border border-red-500/30">
+                                                            EXCLUÍDA
+                                                        </span>
+                                                    ) : (
+                                                        <ParcelBadge
+                                                            status={p.status_manual_override}
+                                                            dueDate={p.data_vencimento}
+                                                            todayStr={todayStr}
+                                                        />
+                                                    )}
                                                 </td>
 
-                                                {/* Action */}
+                                                {/* Action — disabled for deleted rows */}
                                                 <td className="px-6 py-3.5 text-center">
-                                                    <ParcelaActions parcela={{
-                                                        id: p.id,
-                                                        valor_previsto: p.valor_previsto,
-                                                        status_manual_override: p.status_manual_override,
-                                                        numero_referencia: p.numero_referencia,
-                                                        sub_indice: p.sub_indice,
-                                                        forma_pagamento_contrato: p.forma_pagamento_contrato ?? undefined,
-                                                        observacao: p.observacao,
-                                                        data_vencimento: p.data_vencimento,
-                                                        hasPagamento: p.hasPagamento,
-                                                    }} />
+                                                    {isDeleted ? (
+                                                        <RestaurarParcelaBtn parcelaId={p.id} />
+                                                    ) : (
+                                                        <ParcelaActions parcela={{
+                                                            id: p.id,
+                                                            valor_previsto: p.valor_previsto,
+                                                            status_manual_override: p.status_manual_override,
+                                                            numero_referencia: p.numero_referencia,
+                                                            sub_indice: p.sub_indice,
+                                                            forma_pagamento_contrato: p.forma_pagamento_contrato ?? undefined,
+                                                            observacao: p.observacao,
+                                                            data_vencimento: p.data_vencimento,
+                                                            hasPagamento: p.hasPagamento,
+                                                        }} />
+                                                    )}
                                                 </td>
                                             </tr>
                                         );

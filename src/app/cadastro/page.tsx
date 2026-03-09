@@ -337,7 +337,7 @@ export default function CadastroPage() {
                                     )}
                                     <div>
                                         <Lbl required>Data de Início</Lbl>
-                                        <input value={form.data_inicio} onChange={e => { set('data_inicio', e.target.value); if (errors.data_inicio) setErrors({ data_inicio: undefined }); }} required type="date" min={getToday()} className={`${errors.data_inicio ? inpErr : inp} text-gray-300 cursor-text`} />
+                                        <input value={form.data_inicio} onChange={e => { set('data_inicio', e.target.value); if (errors.data_inicio) setErrors({ data_inicio: undefined }); }} required type="date" className={`${errors.data_inicio ? inpErr : inp} text-gray-300 cursor-text`} />
                                         <FieldError msg={errors.data_inicio} />
                                     </div>
                                     <div>

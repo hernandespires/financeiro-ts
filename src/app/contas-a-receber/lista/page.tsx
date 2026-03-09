@@ -12,7 +12,8 @@ import {
     ListFilter,
 } from "lucide-react";
 import { supabaseAdmin } from "@/lib/supabase";
-import { brl, fmtDate, daysLate } from "@/lib/utils";
+import { brl, fmtDate, daysLate, toDateStr } from "@/lib/utils";
+import { isParcelaValidaParaPrevisao } from "@/lib/financeRules";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface RawParcela {
@@ -20,11 +21,14 @@ interface RawParcela {
     valor_previsto: number;
     data_vencimento: string;
     status_manual_override: string;
+    deleted_at?: string | null;
     observacao?: string | null;
     contratos?: {
+        deleted_at?: string | null;
         clientes?: {
             id?: string | null;
             nome_cliente?: string | null;
+            deleted_at?: string | null;
         } | null;
     } | null;
 }
@@ -72,7 +76,7 @@ export default async function ListaRecebimentosMes({
     const params = await searchParams;
     const currentMonth = params.month ?? new Date().toISOString().slice(0, 7);
     const filter = (params.filter ?? "todos").toLowerCase();
-    const todayStr = new Date().toISOString().split("T")[0];
+    const todayStr = toDateStr(new Date());
 
     // ── Month label ────────────────────────────────────────────────────────────
     const monthLabel = new Date(currentMonth + "-01T12:00:00").toLocaleDateString("pt-BR", {
@@ -99,7 +103,8 @@ export default async function ListaRecebimentosMes({
 
     const { data, error } = await supabaseAdmin
         .from("parcelas")
-        .select("id, valor_previsto, data_vencimento, status_manual_override, observacao, contratos(clientes(id, nome_cliente))")
+        .select("id, valor_previsto, data_vencimento, status_manual_override, observacao, deleted_at, contratos(deleted_at, clientes(id, nome_cliente, deleted_at))")
+        .is("deleted_at", null)
         .gte("data_vencimento", startDate)
         .lte("data_vencimento", endDate)
         .order("data_vencimento", { ascending: true });
@@ -108,7 +113,10 @@ export default async function ListaRecebimentosMes({
         console.error("[ListaRecebimentosMes] Supabase error:", error.message);
     }
 
-    const raw: RawParcela[] = (data ?? []) as RawParcela[];
+    // Filter cascade-deleted parents before classification
+    const raw: RawParcela[] = ((data ?? []) as RawParcela[]).filter(
+        (p) => isParcelaValidaParaPrevisao(p, todayStr)
+    );
 
     // ── Classify each parcela ─────────────────────────────────────────────────
     const classified: Classified[] = raw.map((p) => {

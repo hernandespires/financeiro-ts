@@ -14,19 +14,23 @@ import { supabaseAdmin } from "@/lib/supabase";
 import RecebimentosChart, { MonthlyParcela } from "@/components/RecebimentosChart";
 import ActionCardButton from "@/components/ActionCardButton";
 import { brl, toDateStr, daysLate } from "@/lib/utils";
+import { isParcelaValidaParaPrevisao, getRiskStatus } from "@/lib/financeRules";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface RawParcela {
     id: string;
-    contrato_id: string; // needed for cross-default grouping
+    contrato_id: string;
     valor_previsto: number;
-    data_vencimento: string; // "YYYY-MM-DD"
+    data_vencimento: string;
     status_manual_override: string;
+    deleted_at?: string | null;
     observacao?: string | null;
     contratos?: {
+        deleted_at?: string | null;
         clientes?: {
             id?: string | null;
             nome_cliente?: string | null;
+            deleted_at?: string | null;
         } | null;
     } | null;
 }
@@ -58,22 +62,41 @@ export default async function ContasAReceberPage({
     const nextDateStr = nextDateObj.toISOString().split("T")[0];
     const nextMonthStr = nextDateStr.slice(0, 7);
 
-    // ── 1. Fetch parcelas with relational join ─────────────────────────────────
+    // ── 1. Fetch parcelas with strict financial filters ────────────────────────
+    //   a) parcelas.deleted_at IS NULL
+    //   b) parcelas.status_manual_override = 'NORMAL' (open only)
+    //   c) contratos join ensures the contract itself is active (deleted_at IS NULL)
+    //   d) clientes join ensures the client is not soft-deleted
     const { data: parcelasData, error } = await supabaseAdmin
         .from("parcelas")
-        .select("*, contratos(clientes(id, nome_cliente))")
+        .select("*, contratos!inner(deleted_at, clientes!inner(id, nome_cliente, deleted_at))")
         .eq("status_manual_override", "NORMAL")
+        .is("deleted_at", null)
         .order("data_vencimento", { ascending: true });
 
     if (error) {
         console.error("[ContasAReceber] Supabase error:", error.message);
     }
 
-    const parcelas: RawParcela[] = (parcelasData ?? []) as RawParcela[];
+    // Normalise nested join shape
+    const parcelas: RawParcela[] = ((parcelasData ?? []) as any[]).map((p) => ({
+        ...p,
+        contratos: {
+            deleted_at: (p.contratos as any)?.deleted_at ?? null,
+            clientes: (p.contratos as any)?.clientes ?? null,
+        },
+    }));
+
+    // ── Apply cascade soft-delete filter ──────────────────────────────────────────────
+    // Excludes: soft-deleted parcelas, parcelas from deleted contracts/clients,
+    // INADIMPLENTE (≥15d late), PERDA, RENOVAR CONTRATO.
+    // Used as the base for ALL downstream calculations.
+    const parcelasValidas = parcelas.filter((p) => isParcelaValidaParaPrevisao(p, todayStr));
 
     // ── 2. CONTRACT-LEVEL RISK ASSESSMENT (Cross-Default logic) ────────────────
+    //   Uses parcelasValidas so deleted clients/contracts are already excluded.
     const contratoMap = new Map<string, RawParcela[]>();
-    for (const p of parcelas) {
+    for (const p of parcelasValidas) {
         const key = p.contrato_id ?? `solo-${p.id}`;
         if (!contratoMap.has(key)) contratoMap.set(key, []);
         contratoMap.get(key)!.push(p);
@@ -86,16 +109,18 @@ export default async function ContasAReceberPage({
 
     for (const [, group] of contratoMap) {
         const contractBalance = group.reduce((s, p) => s + (p.valor_previsto ?? 0), 0);
+        // Use getRiskStatus from financeRules for consistent classification
         const maxLate = Math.max(...group.map((p) => daysLate(p.data_vencimento, todayStr)));
+        const risco = getRiskStatus(maxLate);
 
-        if (maxLate > 30) totalPerda += contractBalance;
-        else if (maxLate >= 15) totalInadimplencia += contractBalance;
-        else if (maxLate >= 1) totalAtraso += contractBalance;
+        if (risco === 'PERDA') totalPerda += contractBalance;
+        else if (risco === 'INADIMPLENTE') totalInadimplencia += contractBalance;
+        else if (risco === 'ATRASO') totalAtraso += contractBalance;
         else totalAReceber += contractBalance;
     }
 
-    // ── 3. Selected-date agenda (LEFT column) ─────────────────────────────────
-    const parcelasHoje = parcelas.filter((p) => p.data_vencimento === currentDate);
+    // ── 3. Selected-date agenda (LEFT column) ───────────────────────────────────
+    const parcelasHoje = parcelasValidas.filter((p) => p.data_vencimento === currentDate);
     const totalHoje = parcelasHoje.reduce((sum, p) => sum + (p.valor_previsto ?? 0), 0);
 
     const formattedSelectedDate = new Date(currentDate + "T00:00:00").toLocaleDateString("pt-BR", {
@@ -105,17 +130,22 @@ export default async function ContasAReceberPage({
         year: "numeric",
     });
 
-    const parcelasMes = parcelas.filter((p) => p.data_vencimento.startsWith(currentMonth));
+    const parcelasMes = parcelasValidas.filter((p) => p.data_vencimento.startsWith(currentMonth));
     const totalCount = parcelasMes.length;
     const clientCount = new Set(
         parcelasMes
             .map((p) => p.contratos?.clientes?.id)
             .filter(Boolean)
+
     ).size;
 
-    // ── 4. Monthly chart data ─────────────────────────────────────────────────
-    const monthlyData: MonthlyParcela[] = parcelas
-        .filter((p) => p.data_vencimento.startsWith(currentMonth))
+    // ── 4. Monthly chart data ──────────────────────────────────────────────────────────────
+    //   parcelasValidas already excludes all cascade-deleted and INADIMPLENTE items.
+    const parcelasPrevisaoMes = parcelasValidas.filter(
+        (p) => p.data_vencimento.startsWith(currentMonth)
+    );
+
+    const monthlyData: MonthlyParcela[] = parcelasPrevisaoMes
         .map((p) => ({ data_vencimento: p.data_vencimento, valor_previsto: p.valor_previsto }));
 
     const previsaoMes = monthlyData.reduce((s, p) => s + p.valor_previsto, 0);

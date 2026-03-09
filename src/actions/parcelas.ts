@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase";
 import { registrarLog } from "@/lib/logger";
+import { calcularNovoValorContrato } from "@/lib/financeRules";
+import { calcularDataDisponibilidade } from "@/lib/utils";
 
 // ─── Shared revalidation ──────────────────────────────────────────────────────
 function revalidateAll(clienteId?: string) {
@@ -217,7 +219,7 @@ export async function editarParcela(
         // Fetch OLD installment data for diffing and contract adjustment
         const { data: old, error: fetchError } = await supabaseAdmin
             .from('parcelas')
-            .select('valor_previsto, data_vencimento, numero_referencia, sub_indice, contrato_id, contratos(cliente_id)')
+            .select('valor_previsto, data_vencimento, numero_referencia, sub_indice, contrato_id, contratos(cliente_id, forma_pagamento)')
             .eq('id', id)
             .single();
 
@@ -248,10 +250,18 @@ export async function editarParcela(
             ? `${old.numero_referencia}-${old.sub_indice}`
             : `${old.numero_referencia}`;
 
+        // ── Recalculate clearing date based on new due date + payment method ──
+        const formaPagamento: string = (old.contratos as any)?.forma_pagamento || 'PIX';
+        const novaDisponibilidade = calcularDataDisponibilidade(novaDataVencimento, formaPagamento);
+
         // ── Apply update to parcela ───────────────────────────────────────────
         const { error: updateError } = await supabaseAdmin
             .from('parcelas')
-            .update({ valor_previsto: novoValor, data_vencimento: novaDataVencimento })
+            .update({
+                valor_previsto: novoValor,
+                data_vencimento: novaDataVencimento,
+                data_disponibilidade_prevista: novaDisponibilidade,
+            })
             .eq('id', id);
 
         if (updateError) return { ok: false, error: updateError.message };
@@ -275,13 +285,21 @@ export async function editarParcela(
             }
         }
 
-        // ── Audit log ─────────────────────────────────────────────────────────
+        // ── Audit log with JSON snapshots ─────────────────────────────────────
+        // Declare clienteId BEFORE the if-block that uses it
         const clienteId = (old.contratos as any)?.cliente_id;
+
         if (clienteId) {
             const logMsg = changes.length > 0
                 ? `Editou a parcela ${ref}: ${changes.join(' | ')}`
                 : `Editou a parcela ${ref} (sem alterações no valor ou vencimento)`;
-            await registrarLog(clienteId, 'PARCELAS', logMsg);
+            await registrarLog(
+                clienteId,
+                'PARCELAS',
+                logMsg,
+                { numero_referencia: old.numero_referencia, valor_previsto: oldValor, data_vencimento: old.data_vencimento } as Record<string, unknown>,
+                { numero_referencia: old.numero_referencia, valor_previsto: novoValor, data_vencimento: novaDataVencimento } as Record<string, unknown>
+            );
         }
 
         revalidateAll(clienteId);
@@ -309,10 +327,10 @@ export async function softDeleteParcela(id: string): Promise<ActionResult> {
         return { ok: false, error: "Esta parcela já possui pagamento registrado e não pode ser excluída." };
     }
 
-    // Fetch context for logging
+    // ── Fetch full context for math + logging ────────────────────────────────
     const { data: parcela, error: fetchError } = await supabaseAdmin
         .from('parcelas')
-        .select('numero_referencia, sub_indice, contratos(cliente_id)')
+        .select('numero_referencia, sub_indice, valor_previsto, contrato_id, contratos(cliente_id, valor_total_contrato)')
         .eq('id', id)
         .single();
 
@@ -320,6 +338,18 @@ export async function softDeleteParcela(id: string): Promise<ActionResult> {
         return { ok: false, error: fetchError?.message ?? "Parcela não encontrada." };
     }
 
+    const brlFmt = (v: number) =>
+        new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+
+    const contratoData = parcela.contratos as any;
+    const clienteId: string | null = contratoData?.cliente_id ?? null;
+    const valorParcela: number = Number(parcela.valor_previsto ?? 0);
+    const valorAtualContrato: number = Number(contratoData?.valor_total_contrato ?? NaN);
+    const ref = parcela.sub_indice
+        ? `${parcela.numero_referencia}-${parcela.sub_indice}`
+        : `${parcela.numero_referencia}`;
+
+    // ── Soft delete the parcela ───────────────────────────────────────────────
     const { error } = await supabaseAdmin
         .from('parcelas')
         .update({ deleted_at: new Date().toISOString() })
@@ -327,15 +357,93 @@ export async function softDeleteParcela(id: string): Promise<ActionResult> {
 
     if (error) return { ok: false, error: error.message };
 
-    const clienteId = (parcela.contratos as any)?.cliente_id;
-    const ref = parcela.sub_indice
-        ? `${parcela.numero_referencia}-${parcela.sub_indice}`
-        : `${parcela.numero_referencia}`;
+    // ── Deduct from contract total via central finance rule ───────────────────
+    let novoValorContrato: number | null = null;
+    if (!isNaN(valorAtualContrato) && isFinite(valorAtualContrato) && parcela.contrato_id) {
+        novoValorContrato = calcularNovoValorContrato(valorAtualContrato, valorParcela, 'EXCLUIR');
 
-    if (clienteId) {
-        await registrarLog(clienteId, 'PARCELAS', `Excluiu a parcela ${ref} logicamente`);
+        await supabaseAdmin
+            .from('contratos')
+            .update({ valor_total_contrato: novoValorContrato } as any)
+            .eq('id', parcela.contrato_id);
     }
 
-    revalidateAll(clienteId);
+    // ── Detailed audit log ────────────────────────────────────────────────────
+    if (clienteId) {
+        const logMsg = novoValorContrato !== null
+            ? `Excluiu a parcela ${ref} (${brlFmt(valorParcela)}). ` +
+            `Valor total do contrato reduzido de ${brlFmt(valorAtualContrato)} para ${brlFmt(novoValorContrato)}.`
+            : `Excluiu a parcela ${ref} (${brlFmt(valorParcela)}) logicamente.`;
+
+        await registrarLog(clienteId, 'PARCELAS', logMsg);
+    }
+
+    revalidateAll(clienteId ?? undefined);
     return { ok: true };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. RESTAURAR PARCELA (undo soft-delete — mirror of softDeleteParcela)
+//    Adds valor_previsto back to contrato.valor_total_contrato.
+// ─────────────────────────────────────────────────────────────────────────────
+export async function restaurarParcela(id: string): Promise<ActionResult> {
+    try {
+        // Fetch context: need valor_previsto, contrato_id, and current contract total
+        const { data: parcela, error: fetchError } = await supabaseAdmin
+            .from('parcelas')
+            .select('numero_referencia, sub_indice, valor_previsto, contrato_id, contratos(cliente_id, valor_total_contrato)')
+            .eq('id', id)
+            .single();
+
+        if (fetchError || !parcela) {
+            return { ok: false, error: fetchError?.message ?? 'Parcela não encontrada.' };
+        }
+
+        const brlFmt = (v: number) =>
+            new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+
+        const contratoData = parcela.contratos as any;
+        const clienteId: string | null = contratoData?.cliente_id ?? null;
+        const valorParcela = Number(parcela.valor_previsto ?? 0);
+        const valorAtualContrato = Number(contratoData?.valor_total_contrato ?? NaN);
+        const ref = parcela.sub_indice
+            ? `${parcela.numero_referencia}-${parcela.sub_indice}`
+            : `${parcela.numero_referencia}`;
+
+        // ── Restore the parcela (clear deleted_at) ───────────────────────────
+        const { error: restoreErr } = await supabaseAdmin
+            .from('parcelas')
+            .update({ deleted_at: null })
+            .eq('id', id);
+
+        if (restoreErr) return { ok: false, error: restoreErr.message };
+
+        // ── Add valor_previsto back to contract total via central finance rule ───
+        let novoValorContrato: number | null = null;
+        if (!isNaN(valorAtualContrato) && isFinite(valorAtualContrato) && parcela.contrato_id) {
+            novoValorContrato = calcularNovoValorContrato(valorAtualContrato, valorParcela, 'RESTAURAR');
+
+            await supabaseAdmin
+                .from('contratos')
+                .update({ valor_total_contrato: novoValorContrato } as any)
+                .eq('id', parcela.contrato_id);
+        }
+
+        // ── Detailed audit log ────────────────────────────────────────────────
+        if (clienteId) {
+            const logMsg = novoValorContrato !== null
+                ? `Restaurou a parcela ${ref} (${brlFmt(valorParcela)}). ` +
+                `Valor do contrato reajustado para ${brlFmt(novoValorContrato)}.`
+                : `Restaurou a parcela ${ref} logicamente.`;
+
+            await registrarLog(clienteId, 'PARCELAS', logMsg);
+        }
+
+        revalidateAll(clienteId ?? undefined);
+        return { ok: true };
+
+    } catch (err: any) {
+        console.error('[restaurarParcela] Exceção:', err);
+        return { ok: false, error: err.message || 'Erro desconhecido.' };
+    }
 }

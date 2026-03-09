@@ -2,14 +2,16 @@
 
 import { useState, useTransition, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { Pencil, Trash2, X, Loader2, AlertTriangle } from "lucide-react";
-import { softDeleteCliente } from "@/actions/clientes";
+import { Pencil, Trash2, X, Loader2, AlertTriangle, RotateCcw } from "lucide-react";
+import { softDeleteCliente, restaurarCliente } from "@/actions/clientes";
 import { useRouter } from "next/navigation";
 import EditarClienteModal, { type ClienteEditData } from "@/components/EditarClienteModal";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface ClienteActionsProps extends ClienteEditData {
     isAdmin: boolean;
+    /** true when the client is soft-deleted (deleted_at IS NOT NULL) */
+    isDeleted?: boolean;
 }
 
 // ─── Delete Confirmation Modal ────────────────────────────────────────────────
@@ -57,8 +59,38 @@ function DeleteModal({ clienteId, nomeCliente, onClose }: {
     );
 }
 
+// ─── Restore Confirmation (inline button for deleted clients) ─────────────────
+function RestaurarClienteBtn({ clienteId }: { clienteId: string }) {
+    const router = useRouter();
+    const [isPending, startTransition] = useTransition();
+    const [error, setError] = useState<string | null>(null);
+
+    function handleRestaurar() {
+        setError(null);
+        startTransition(async () => {
+            const res = await restaurarCliente(clienteId);
+            if (res.ok) router.refresh();
+            else setError(res.error ?? "Erro ao restaurar.");
+        });
+    }
+
+    return (
+        <div className="flex flex-col items-end gap-1">
+            <button
+                onClick={handleRestaurar}
+                disabled={isPending}
+                className="flex items-center gap-1.5 rounded-xl border border-green-500/30 hover:border-green-500 bg-green-500/5 hover:bg-green-500/10 text-green-400 px-3 py-2 text-xs font-semibold transition-all disabled:opacity-50"
+            >
+                {isPending ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
+                {isPending ? "Restaurando…" : "Restaurar Cliente"}
+            </button>
+            {error && <p className="text-[10px] text-red-400">{error}</p>}
+        </div>
+    );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
-export default function ClienteActions({ isAdmin, ...clienteData }: ClienteActionsProps) {
+export default function ClienteActions({ isAdmin, isDeleted, ...clienteData }: ClienteActionsProps) {
     const [isEditOpen, setIsEditOpen] = useState(false);
     const [isDeleteOpen, setIsDeleteOpen] = useState(false);
     const [mounted, setMounted] = useState(false);
@@ -67,17 +99,25 @@ export default function ClienteActions({ isAdmin, ...clienteData }: ClienteActio
     return (
         <>
             <div className="flex items-center gap-2">
+                {/* Editar — visible always */}
                 <button onClick={() => setIsEditOpen(true)} className="flex items-center gap-1.5 rounded-xl border border-orange-500/30 hover:border-orange-500 bg-orange-500/5 hover:bg-orange-500/10 text-orange-400 px-3 py-2 text-xs font-semibold transition-all">
                     <Pencil size={13} /> Editar Cliente
                 </button>
-                {isAdmin && (
+
+                {/* Admin + NOT deleted → Excluir */}
+                {isAdmin && !isDeleted && (
                     <button onClick={() => setIsDeleteOpen(true)} className="flex items-center gap-1.5 rounded-xl border border-red-500/30 hover:border-red-500 bg-red-500/5 hover:bg-red-500/10 text-red-400 px-3 py-2 text-xs font-semibold transition-all">
                         <Trash2 size={13} /> Excluir Cliente
                     </button>
                 )}
+
+                {/* Admin + IS deleted → Restaurar */}
+                {isAdmin && isDeleted && mounted && (
+                    <RestaurarClienteBtn clienteId={clienteData.clienteId} />
+                )}
             </div>
 
-            {/* Full-featured edit modal from EditarClienteModal.tsx */}
+            {/* Edit modal */}
             <EditarClienteModal
                 isOpen={mounted && isEditOpen}
                 onClose={() => setIsEditOpen(false)}
@@ -85,6 +125,7 @@ export default function ClienteActions({ isAdmin, ...clienteData }: ClienteActio
                 isAdmin={isAdmin}
             />
 
+            {/* Delete confirmation modal */}
             {mounted && isDeleteOpen && (
                 <DeleteModal
                     clienteId={clienteData.clienteId}

@@ -45,7 +45,6 @@ export function getToday(): string {
 
 export function validateDataInicio(value: string): string | undefined {
     if (!value) return 'Data de Início é obrigatória.';
-    if (value < getToday()) return 'A data de início não pode ser no passado.';
     return undefined;
 }
 
@@ -56,6 +55,7 @@ export function validateDataInicioComPeriodo(
     tipoContrato: string
 ): string | undefined {
     if (!value) return 'Data de Início é obrigatória.';
+    // ANTIGO bypasses ALL checks — allows historical contracts fully expired
     if (tipoContrato === 'ANTIGO') return undefined;
 
     const fim = new Date(`${value}T12:00:00Z`);
@@ -64,7 +64,7 @@ export function validateDataInicioComPeriodo(
     hoje.setHours(0, 0, 0, 0);
 
     if (fim < hoje)
-        return 'Este contrato já expirou. Para contratos finalizados, utilize a opção Cliente Antigo.';
+        return 'Este contrato já expirou. Para registrar contratos finalizados ou antigos, volte e selecione a opção Cliente Antigo.';
     return undefined;
 }
 
