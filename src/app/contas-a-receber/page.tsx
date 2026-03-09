@@ -14,7 +14,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import RecebimentosChart, { MonthlyParcela } from "@/components/RecebimentosChart";
 import ActionCardButton from "@/components/ActionCardButton";
 import { brl, toDateStr, daysLate } from "@/lib/utils";
-import { isParcelaValidaParaPrevisao, getRiskStatus, isNotDeleted } from "@/lib/financeRules";
+import { isParcelaValidaParaPrevisao, getRiskStatus, isNotDeleted, getContratosSujos } from "@/lib/financeRules";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface RawParcela {
@@ -89,13 +89,18 @@ export default async function ContasAReceberPage({
 
     // ── Apply soft-delete-only filter (for risk buckets) ─────────────────────
     // Keeps INADIMPLENTE and PERDA installments so those buckets are not zero.
-    // Only removes parcelas whose own record, contract, or client is soft-deleted.
     const parcelasAtivas = parcelas.filter((p) => isNotDeleted(p));
 
-    // ── Apply full forecast filter (excludes INADIMPLENTE/PERDA + RENOVAR) ────
-    // Used for chart, agenda, and previsão — where we intentionally exclude
-    // unrecoverable installments from the expected revenue calculation.
-    const parcelasValidas = parcelasAtivas.filter((p) => isParcelaValidaParaPrevisao(p, todayStr));
+    // ── Cross-default contagion: identify tainted contracts ───────────────────
+    // Any contract with ≥15d overdue installment poisons ALL its open parcelas.
+    const contratosSujos = getContratosSujos(parcelasAtivas, todayStr);
+
+    // ── Apply full forecast filter (isParcelaValidaParaPrevisao + contagion) ───
+    // Used for chart, agenda, and previsão — excludes INADIMPLENTE/PERDA +
+    // future installments of cross-defaulted contracts.
+    const parcelasParaPrevisao = parcelasAtivas.filter((p) =>
+        isParcelaValidaParaPrevisao(p, todayStr, contratosSujos)
+    );
 
     // ── 2. CONTRACT-LEVEL RISK ASSESSMENT (Cross-Default logic) ────────────────
     //   Built from parcelasAtivas so INADIMPLENTE/PERDA contracts are counted.
@@ -122,8 +127,8 @@ export default async function ContasAReceberPage({
         else totalAReceber += contractBalance;
     }
 
-    // ── 3. Selected-date agenda (LEFT column) ───────────────────────────────────
-    const parcelasHoje = parcelasValidas.filter((p) => p.data_vencimento === currentDate);
+    // ── 3. Selected-date agenda (LEFT column) ─────────────────────────────────────
+    const parcelasHoje = parcelasParaPrevisao.filter((p) => p.data_vencimento === currentDate);
     const totalHoje = parcelasHoje.reduce((sum, p) => sum + (p.valor_previsto ?? 0), 0);
 
     const formattedSelectedDate = new Date(currentDate + "T00:00:00").toLocaleDateString("pt-BR", {
@@ -133,7 +138,7 @@ export default async function ContasAReceberPage({
         year: "numeric",
     });
 
-    const parcelasMes = parcelasValidas.filter((p) => p.data_vencimento.startsWith(currentMonth));
+    const parcelasMes = parcelasParaPrevisao.filter((p) => p.data_vencimento.startsWith(currentMonth));
     const totalCount = parcelasMes.length;
     const clientCount = new Set(
         parcelasMes
@@ -142,13 +147,11 @@ export default async function ContasAReceberPage({
 
     ).size;
 
-    // ── 4. Monthly chart data ──────────────────────────────────────────────────────────────
-    //   parcelasValidas already excludes all cascade-deleted and INADIMPLENTE items.
-    const parcelasPrevisaoMes = parcelasValidas.filter(
-        (p) => p.data_vencimento.startsWith(currentMonth)
-    );
-
-    const monthlyData: MonthlyParcela[] = parcelasPrevisaoMes
+    // ── 4. Monthly chart data ───────────────────────────────────────────────────────────────
+    //   parcelasParaPrevisao excludes: cascade-deleted, INADIMPLENTE/PERDA,
+    //   RENOVAR CONTRATO, and cross-defaulted future installments.
+    const monthlyData: MonthlyParcela[] = parcelasParaPrevisao
+        .filter((p) => p.data_vencimento.startsWith(currentMonth))
         .map((p) => ({ data_vencimento: p.data_vencimento, valor_previsto: p.valor_previsto }));
 
     const previsaoMes = monthlyData.reduce((s, p) => s + p.valor_previsto, 0);

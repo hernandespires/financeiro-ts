@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { supabaseAdmin } from "@/lib/supabase";
 import { brl, fmtDate, toDateStr } from "@/lib/utils";
-import { isParcelaValidaParaPrevisao } from "@/lib/financeRules";
+import { isParcelaValidaParaPrevisao, getContratosSujos } from "@/lib/financeRules";
 import RecebimentosChart from "@/components/RecebimentosChart";
 
 export default async function PrevisaoCaixaPage({
@@ -62,20 +62,26 @@ export default async function PrevisaoCaixaPage({
     const nextNav = isAnnual ? nextYearStr : nextMonthStr;
     const periodParam = isAnnual ? "annual" : "monthly";
 
-    // ── Fetch parcelas by clearing date ───────────────────────────────────────
+    // ── Fetch parcelas — ALL NORMAL (for cross-default detection) + date-range ───
     const { data: parcelasData } = await supabaseAdmin
         .from("parcelas")
         .select(
-            "id, valor_previsto, status_manual_override, data_disponibilidade_prevista, data_vencimento, deleted_at, contratos(forma_pagamento, deleted_at, clientes(id, nome_cliente, deleted_at))"
+            "id, valor_previsto, status_manual_override, data_disponibilidade_prevista, data_vencimento, contrato_id, deleted_at, contratos(forma_pagamento, deleted_at, clientes(id, nome_cliente, deleted_at))"
         )
-        .gte("data_disponibilidade_prevista", startDate)
-        .lte("data_disponibilidade_prevista", endDate)
+        .or(`status_manual_override.eq.NORMAL,and(data_disponibilidade_prevista.gte.${startDate},data_disponibilidade_prevista.lte.${endDate})`)
         .order("data_disponibilidade_prevista", { ascending: true });
 
-    // A BARREIRA DE FOGO: filtra Inadimplentes, Perdas e Excluídos instantaneamente.
-    const parcelas = (parcelasData ?? []).filter((p) =>
-        isParcelaValidaParaPrevisao(p, todayStr)
-    );
+    const rawParcelas = parcelasData ?? [];
+
+    // Pass 1: identify contracts contaminated by ≥15d overdue installments
+    const contratosSujos = getContratosSujos(rawParcelas, todayStr);
+
+    // Pass 2: strict eligibility (cross-default contagion) then date-range guard
+    const parcelas = rawParcelas.filter((p) => {
+        if (!isParcelaValidaParaPrevisao(p, todayStr, contratosSujos)) return false;
+        const d = p.data_disponibilidade_prevista || p.data_vencimento;
+        return d >= startDate && d <= endDate;
+    });
 
     // ── Aggregate KPIs & per-platform buckets ─────────────────────────────────
     let totalCaixa = 0;

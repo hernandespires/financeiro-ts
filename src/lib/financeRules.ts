@@ -106,7 +106,8 @@ export function isNotDeleted(parcela: any): boolean {
 export function isParcelaValidaParaPrevisao(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     parcela: any,
-    todayStr: string
+    todayStr: string,
+    contratosSujos: Set<string> = new Set()
 ): boolean {
     // Rule 1: installment itself is soft-deleted
     if (parcela.deleted_at != null) return false;
@@ -132,7 +133,12 @@ export function isParcelaValidaParaPrevisao(
     // Rule 4: always include if already paid (no risk uncertainty)
     if (status === 'PAGO') return true;
 
-    // Rule 5: classify overdue risk and exclude INADIMPLENTE / PERDA
+    // Rule 5: BARREIRA CROSS-DEFAULT (Contagion) —
+    // If the contract has ANY installment ≥15 days overdue, no open installment
+    // from that contract enters the forecast (even future due dates).
+    if (parcela.contrato_id && contratosSujos.has(parcela.contrato_id)) return false;
+
+    // Rule 6: classify overdue risk and exclude INADIMPLENTE / PERDA
     const dias = calcularDiasAtraso(
         parcela.data_vencimento as string,
         todayStr
@@ -140,6 +146,38 @@ export function isParcelaValidaParaPrevisao(
     const risk = getRiskStatus(dias);
 
     return risk === 'EM DIA' || risk === 'ATRASO';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3b. Cross-Default contagion detector
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Scans all parcelas and returns the set of `contrato_id`s that are
+ * "dirty" — i.e., have at least one NORMAL installment ≥ 15 days overdue.
+ *
+ * Pass the result to `isParcelaValidaParaPrevisao` as `contratosSujos` so
+ * that ALL open installments of those contracts are excluded from the forecast,
+ * even future ones that individually appear healthy.
+ *
+ * @param todasParcelas  Full (unfiltered) list of parcelas from the DB.
+ * @param todayStr       Current date as "YYYY-MM-DD".
+ */
+export function getContratosSujos(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    todasParcelas: any[],
+    todayStr: string
+): Set<string> {
+    const sujos = new Set<string>();
+    for (const p of todasParcelas) {
+        if (p.status_manual_override === 'NORMAL' && p.data_vencimento) {
+            const dias = calcularDiasAtraso(p.data_vencimento, todayStr);
+            if (dias >= 15 && p.contrato_id) {
+                sujos.add(p.contrato_id);
+            }
+        }
+    }
+    return sujos;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
