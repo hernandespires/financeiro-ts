@@ -25,19 +25,38 @@ export async function middleware(request: NextRequest) {
 
     const isLoginPage = request.nextUrl.pathname.startsWith('/login')
     const isAuthCallback = request.nextUrl.pathname.startsWith('/auth')
+    const isBloqueadoPage = request.nextUrl.pathname.startsWith('/bloqueado')
 
-    // Usuário não autenticado tentando acessar rota protegida → redireciona pro login
-    if (!user && !isLoginPage && !isAuthCallback) {
+    // ── Unauthenticated: block all protected routes ───────────────────────────
+    if (!user && !isLoginPage && !isAuthCallback && !isBloqueadoPage) {
         const url = request.nextUrl.clone()
         url.pathname = '/login'
         return NextResponse.redirect(url)
     }
 
-    // Usuário já autenticado tentando acessar /login → redireciona pro dashboard
-    if (user && isLoginPage) {
-        const url = request.nextUrl.clone()
-        url.pathname = '/'
-        return NextResponse.redirect(url)
+    // ── Authenticated: strict cargo (role) check ──────────────────────────────
+    if (user) {
+        const { data: userData } = await supabase
+            .from('usuarios')
+            .select('cargo')
+            .eq('id', user.id)
+            .maybeSingle()
+
+        const hasRole = !!userData?.cargo
+
+        // No role yet → waiting room (allow /bloqueado and /auth/* to pass through)
+        if (!hasRole && !isBloqueadoPage && !isAuthCallback) {
+            const url = request.nextUrl.clone()
+            url.pathname = '/bloqueado'
+            return NextResponse.redirect(url)
+        }
+
+        // Has role → prevent access to /login or /bloqueado
+        if (hasRole && (isLoginPage || isBloqueadoPage)) {
+            const url = request.nextUrl.clone()
+            url.pathname = '/'
+            return NextResponse.redirect(url)
+        }
     }
 
     return supabaseResponse

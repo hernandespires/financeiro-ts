@@ -58,7 +58,7 @@ export default function Header() {
         router.push('/login');
     }
 
-    if (pathname === '/login') return null;
+    if (pathname === '/login' || pathname === '/bloqueado') return null;
 
     const isAdmin = profile?.cargo === 'ADMIN' || profile?.cargo === 'DIRETOR';
     const initials = profile?.nome?.charAt(0).toUpperCase() ?? '?';

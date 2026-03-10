@@ -4,6 +4,8 @@ import { supabaseAdmin } from "@/lib/supabase";
 
 /**
  * Validates the caller's session. Throws if not authenticated.
+ * Also checks that the user has a cargo assigned — blocks roleless users from
+ * executing any server action, even if they somehow bypass the middleware.
  * Use in any Server Action that requires a logged-in user.
  */
 export async function requireAuth() {
@@ -15,6 +17,18 @@ export async function requireAuth() {
     );
     const { data: { user }, error } = await supabase.auth.getUser();
     if (error || !user) throw new Error("Ação não autorizada. Sessão inválida ou expirada.");
+
+    // ── Double-lock: ensure user has a role in the database ──────────────────
+    const { data: dbUser } = await supabaseAdmin
+        .from('usuarios')
+        .select('cargo')
+        .eq('id', user.id)
+        .maybeSingle();
+
+    if (!dbUser?.cargo) {
+        throw new Error("Ação bloqueada. Seu usuário ainda não possui permissão no sistema.");
+    }
+
     return user;
 }
 
