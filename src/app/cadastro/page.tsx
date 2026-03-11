@@ -8,7 +8,7 @@ import { cadastrarClienteCompleto, DadosCadastroCompleto, TipoCadastro } from '@
 import { FORMA_PAGAMENTO, PERIODICIDADE, CATEGORIAS } from '@/lib/constants';
 import { maskCurrency, unmaskCurrency, maskPercent, unmaskPercent } from '@/lib/masks';
 import {
-    validateCnpjEin, validatePhone, validateAniversario,
+    validatePhone, validateAniversario,
     validateSegmento, validateLinkAsana, validateListItem,
     validateDataInicioComPeriodo, getToday,
 } from '@/lib/validators';
@@ -33,6 +33,7 @@ interface FinancialFields {
     valor_parcela_display: string;
     periodo_meses: string;
     parcelas_com_valor: string;
+    parcela1_data: string;
 }
 
 type FullFormState = SharedClientFormState & FinancialFields;
@@ -48,6 +49,7 @@ const EMPTY_FORM: FullFormState = {
     forma_pagamento: '', periodicidade: 'Mensal', categoria_faturamento: 'BASE',
     data_inicio: '', porcentagem_imposto: '', valor_parcela_display: '',
     periodo_meses: '', parcelas_com_valor: '',
+    parcela1_data: '', parcela2_data: '', parcela2_valor_display: '',
 };
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -135,11 +137,10 @@ export default function CadastroPage() {
 
     function handleStep2Next(e: React.FormEvent) {
         e.preventDefault();
-        const e1 = validateCnpjEin(form.cnpj);
         const e2 = validatePhone(form.telefone);
         const e3 = validateAniversario(form.aniversario);
-        setErrors({ cnpj: e1, telefone: e2, aniversario: e3 });
-        if (e1 || e2 || e3) return;
+        setErrors({ telefone: e2, aniversario: e3 });
+        if (e2 || e3) return;
         setStep(s => s + 1);
     }
 
@@ -170,7 +171,6 @@ export default function CadastroPage() {
         if (!tipo || isPending) return;
 
         // Full re-validation across all steps
-        const cnpjErr = validateCnpjEin(form.cnpj);
         const phoneErr = validatePhone(form.telefone);
         const anivErr = validateAniversario(form.aniversario);
         const segmentoErr = validateSegmento(form.segmento);
@@ -185,25 +185,28 @@ export default function CadastroPage() {
             tipo
         );
 
-        if (cnpjErr || phoneErr || anivErr || segmentoErr || asanaErr || agenciaErr || sdrErr || closerErr || dataInicioErr) {
-            setErrors({ cnpj: cnpjErr, telefone: phoneErr, aniversario: anivErr, segmento: segmentoErr, link_asana: asanaErr, agencia: agenciaErr, sdr: sdrErr, closer: closerErr, data_inicio: dataInicioErr });
+        if (phoneErr || anivErr || segmentoErr || asanaErr || agenciaErr || sdrErr || closerErr || dataInicioErr) {
+            setErrors({ telefone: phoneErr, aniversario: anivErr, segmento: segmentoErr, link_asana: asanaErr, agencia: agenciaErr, sdr: sdrErr, closer: closerErr, data_inicio: dataInicioErr });
             showToast('error', 'Corrija os erros antes de finalizar o cadastro.');
             return;
         }
 
         startTransition(async () => {
             const dados: DadosCadastroCompleto = {
-                tipo_cadastro: tipo, nome: form.nome, empresa: form.empresa, cnpj: form.cnpj,
+                tipo_cadastro: tipo, nome: form.nome, empresa: form.empresa,
                 telefone: form.telefone, aniversario: form.aniversario, pais: form.pais,
                 estado: form.estado, cidade: form.cidade, segmento: form.segmento, link_asana: form.link_asana,
                 agencia: form.agencia, sdr: form.sdr, closer: form.closer, cnpj_vinculado: form.cnpj_vinculado,
                 programa_fechado: form.programa_fechado, forma_pagamento: form.forma_pagamento,
                 periodicidade: form.periodicidade, data_inicio: form.data_inicio,
-                valor_total: unmaskCurrency(form.valor_parcela_display),
+                valor_parcela_bruto: unmaskCurrency(form.valor_parcela_display),
                 periodo_meses: parseInt(form.periodo_meses || '0', 10),
                 porcentagem_imposto: unmaskPercent(form.porcentagem_imposto),
                 categoria_faturamento: form.categoria_faturamento,
                 parcelas_com_valor: form.parcelas_com_valor ? parseInt(form.parcelas_com_valor, 10) : undefined,
+                parcela1_data: form.parcela1_data || undefined,
+                parcela2_data: form.parcela2_data || undefined,
+                parcela2_valor: form.parcela2_valor_display ? unmaskCurrency(form.parcela2_valor_display) : undefined,
             };
             try {
                 const res = await cadastrarClienteCompleto(dados);
@@ -324,22 +327,25 @@ export default function CadastroPage() {
                             </form>
                         )}
 
-                        {/* ── Step 5: Financeiro (no shared block — registration-only fields) ── */}
+                        {/* ── Step 5: Financeiro ── */}
                         {step === 5 && (
                             <form onSubmit={handleSubmit} className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+
+                                    {/* Forma de Pagamento — always visible */}
                                     <SelectField label="Forma de Pagamento" name="forma_pagamento" value={form.forma_pagamento} onChange={v => set('forma_pagamento', v)} options={FORMA_PAGAMENTO} placeholder="— Selecione —" required />
-                                    {(isFullFinancial || (tipo === 'A_VISTA' && parseInt(form.parcelas_com_valor || '1', 10) > 1)) && (
+
+                                    {/* Periodicidade — only for RECORRENTE/PONTUAL/ANTIGO */}
+                                    {isFullFinancial && (
                                         <SelectField label="Periodicidade das Parcelas" name="periodicidade" value={form.periodicidade} onChange={v => set('periodicidade', v)} options={PERIODICIDADE} required />
                                     )}
+
+                                    {/* Categoria — all types */}
                                     {(isFullFinancial || tipo === 'A_VISTA') && (
                                         <SelectField label="Categoria" name="categoria_faturamento" value={form.categoria_faturamento} onChange={v => set('categoria_faturamento', v)} options={CATEGORIAS} required />
                                     )}
-                                    <div>
-                                        <Lbl required>Data de Início</Lbl>
-                                        <input value={form.data_inicio} onChange={e => { set('data_inicio', e.target.value); if (errors.data_inicio) setErrors({ data_inicio: undefined }); }} required type="date" className={`${errors.data_inicio ? inpErr : inp} text-gray-300 cursor-text`} />
-                                        <FieldError msg={errors.data_inicio} />
-                                    </div>
+
+                                    {/* Imposto — always visible */}
                                     <div>
                                         <Lbl>Porcentagem de Imposto</Lbl>
                                         <div className="relative">
@@ -347,26 +353,76 @@ export default function CadastroPage() {
                                             <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-bold select-none">%</span>
                                         </div>
                                     </div>
-                                    <div>
-                                        <Lbl required>Valor Total do Contrato</Lbl>
-                                        <div className="relative">
-                                            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-bold select-none">R$</span>
-                                            <input value={form.valor_parcela_display} onChange={e => set('valor_parcela_display', maskCurrency(e.target.value))} required type="text" placeholder="0,00" className={`${inp} pl-10 font-bold text-orange-400`} />
-                                        </div>
-                                    </div>
-                                    {(isFullFinancial || tipo === 'A_VISTA') && (
-                                        <div>
-                                            <Lbl required>Período do Contrato (Meses)</Lbl>
-                                            <input value={form.periodo_meses} onChange={e => set('periodo_meses', e.target.value.replace(/\D/g, ''))} required type="text" inputMode="numeric" placeholder="12" className={inp} />
-                                        </div>
-                                    )}
+
+                                    {/* A_VISTA — quantas vezes */}
                                     {tipo === 'A_VISTA' && (
-                                        <div className="sm:col-span-2">
+                                        <div>
                                             <Lbl>Dividir pagamento em (Ex: 1 ou 2 vezes)</Lbl>
                                             <input value={form.parcelas_com_valor} onChange={e => set('parcelas_com_valor', e.target.value.replace(/\D/g, ''))} type="text" inputMode="numeric" placeholder="1" className={`${inp} w-1/2`} />
                                         </div>
                                     )}
+
+                                    {/* Data de Início — GLOBAL for all types (contract timeline anchor) */}
+                                    <div>
+                                        <Lbl required>Data de Início do Contrato</Lbl>
+                                        <input value={form.data_inicio} onChange={e => { set('data_inicio', e.target.value); if (errors.data_inicio) setErrors({ data_inicio: undefined }); }} required type="date" className={`${errors.data_inicio ? inpErr : inp} text-gray-300 cursor-text`} />
+                                        <FieldError msg={errors.data_inicio} />
+                                    </div>
+
+                                    {/* Período — GLOBAL for all types */}
+                                    <div>
+                                        <Lbl required>Período do Contrato (Meses)</Lbl>
+                                        <input value={form.periodo_meses} onChange={e => set('periodo_meses', e.target.value.replace(/\D/g, ''))} required type="text" inputMode="numeric" placeholder="12" className={inp} />
+                                    </div>
+
+                                    {/* Valor Bruto — shown for 1x or non-A_VISTA */}
+                                    {!(tipo === 'A_VISTA' && form.parcelas_com_valor === '2') && (
+                                        <div>
+                                            <Lbl required>Valor Bruto por Parcela</Lbl>
+                                            <div className="relative">
+                                                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-bold select-none">R$</span>
+                                                <input value={form.valor_parcela_display} onChange={e => set('valor_parcela_display', maskCurrency(e.target.value))} required type="text" placeholder="0,00" className={`${inp} pl-10 font-bold text-orange-400`} />
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
+
+                                {/* ── A_VISTA 2x — Explicit billing dates & values ── */}
+                                {tipo === 'A_VISTA' && form.parcelas_com_valor === '2' && (
+                                    <div className="rounded-2xl border border-orange-500/20 bg-orange-500/[0.03] p-6 space-y-5">
+                                        <p className="text-xs font-bold text-orange-400 uppercase tracking-widest flex items-center gap-2">
+                                            <span className="w-5 h-5 rounded-full bg-orange-500/20 flex items-center justify-center text-[10px]">2</span>
+                                            Divisão do Pagamento (2×)
+                                        </p>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                                            {/* Parcela 1 */}
+                                            <div>
+                                                <Lbl required>Data de Vencimento (1ª Parcela)</Lbl>
+                                                <input value={form.parcela1_data} onChange={e => set('parcela1_data', e.target.value)} required type="date" className={`${inp} text-gray-300 cursor-text`} />
+                                            </div>
+                                            <div>
+                                                <Lbl required>Valor Bruto (1ª Parcela)</Lbl>
+                                                <div className="relative">
+                                                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-bold select-none">R$</span>
+                                                    <input value={form.valor_parcela_display} onChange={e => set('valor_parcela_display', maskCurrency(e.target.value))} required type="text" placeholder="0,00" className={`${inp} pl-10 font-bold text-orange-400`} />
+                                                </div>
+                                            </div>
+                                            {/* Parcela 2 */}
+                                            <div>
+                                                <Lbl required>Data de Vencimento (2ª Parcela)</Lbl>
+                                                <input value={form.parcela2_data || ''} onChange={e => set('parcela2_data' as any, e.target.value)} required type="date" className={`${inp} text-gray-300 cursor-text`} />
+                                            </div>
+                                            <div>
+                                                <Lbl required>Valor Bruto (2ª Parcela)</Lbl>
+                                                <div className="relative">
+                                                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-bold select-none">R$</span>
+                                                    <input value={form.parcela2_valor_display || ''} onChange={e => set('parcela2_valor_display' as any, maskCurrency(e.target.value))} required type="text" placeholder="0,00" className={`${inp} pl-10 font-bold text-orange-400`} />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
                                 <button type="submit" disabled={isPending} className={`${btnOrange} flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed`}>
                                     {isPending
                                         ? <><svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>Processando...</>

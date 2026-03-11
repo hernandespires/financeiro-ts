@@ -30,7 +30,10 @@ export interface ActionResult {
 // ─────────────────────────────────────────────────────────────────────────────
 export async function registrarPagamentoCompleto(
     parcelaId: string,
-    valorPago: number,
+    valorLiquido: number,     // net cash landed in account after all deductions
+    taxaPlataforma: number,   // fee retained by Stripe/Iugu/PIX
+    impostoRetido: number,    // tax withheld (e.g. ISS, PIS, COFINS)
+    jurosAplicado: number,    // interest/penalties collected on top
     dataPagamento: string,    // "YYYY-MM-DD"
     plataforma: string,       // e.g. "PIX", "IUGU", "STRIPE BRASIL", "STRIPE EUA"
     observacao?: string
@@ -69,6 +72,7 @@ export async function registrarPagamentoCompleto(
                 status_manual_override: 'PAGO' as any,
                 observacao: observacao || null,
                 data_disponibilidade_prevista: disponivelEmReal,
+                juros_aplicado: jurosAplicado || null,
             })
             .eq('id', parcelaId);
 
@@ -84,7 +88,9 @@ export async function registrarPagamentoCompleto(
                 parcela_id: parcelaId,
                 data_pagamento: dataPagamento,
                 disponivel_em: disponivelEmReal,
-                valor_pago: valorPago,
+                valor_pago: valorLiquido,
+                taxa_gateway: taxaPlataforma,
+                imposto_retido: impostoRetido || null,
                 plataforma: plataforma as any,
                 status_pagamento: 'RECEBIDO' as any,
             });
@@ -131,7 +137,8 @@ export async function registrarPagamentoCompleto(
         }
 
         // ── Step 6: Audit log ─────────────────────────────────────────────────────
-        const logMsg = `Deu baixa na parcela ${ref} — ${brlFmt(valorPago)} via ${plataforma}${rippleNote}`;
+        const brlFmt2 = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+        const logMsg = `Deu baixa na parcela ${ref} — Líq: ${brlFmt2(valorLiquido)} | Taxa: ${brlFmt2(taxaPlataforma)} | Imposto: ${brlFmt2(impostoRetido)} | Juros: ${brlFmt2(jurosAplicado)} — via ${plataforma}${rippleNote}`;
         if (clienteId) {
             await registrarLog(clienteId, 'PARCELAS', logMsg);
         }
@@ -401,7 +408,7 @@ export async function softDeleteParcela(id: string): Promise<ActionResult> {
         // ── Fetch full context for math + logging ────────────────────────────────
         const { data: parcela, error: fetchError } = await supabaseAdmin
             .from('parcelas')
-            .select('numero_referencia, sub_indice, valor_previsto, contrato_id, contratos(cliente_id, valor_total_contrato)')
+            .select('numero_referencia, sub_indice, valor_bruto, valor_previsto, contrato_id, contratos(cliente_id, valor_total_contrato)')
             .eq('id', id)
             .single();
 
@@ -414,7 +421,8 @@ export async function softDeleteParcela(id: string): Promise<ActionResult> {
 
         const contratoData = parcela.contratos as any;
         const clienteId: string | null = contratoData?.cliente_id ?? null;
-        const valorParcela: number = Number(parcela.valor_previsto ?? 0);
+        // Use valor_bruto for contract total math (contract tracks gross revenue)
+        const valorParcela: number = Number((parcela as any).valor_bruto ?? parcela.valor_previsto ?? 0);
         const valorAtualContrato: number = Number(contratoData?.valor_total_contrato ?? NaN);
         const ref = parcela.sub_indice
             ? `${parcela.numero_referencia}-${parcela.sub_indice}`
@@ -466,7 +474,7 @@ export async function restaurarParcela(id: string): Promise<ActionResult> {
         // Fetch context: need valor_previsto, contrato_id, and current contract total
         const { data: parcela, error: fetchError } = await supabaseAdmin
             .from('parcelas')
-            .select('numero_referencia, sub_indice, valor_previsto, contrato_id, contratos(cliente_id, valor_total_contrato)')
+            .select('numero_referencia, sub_indice, valor_bruto, valor_previsto, contrato_id, contratos(cliente_id, valor_total_contrato)')
             .eq('id', id)
             .single();
 
@@ -479,7 +487,8 @@ export async function restaurarParcela(id: string): Promise<ActionResult> {
 
         const contratoData = parcela.contratos as any;
         const clienteId: string | null = contratoData?.cliente_id ?? null;
-        const valorParcela = Number(parcela.valor_previsto ?? 0);
+        // Use valor_bruto for contract total math (contract tracks gross revenue)
+        const valorParcela = Number((parcela as any).valor_bruto ?? parcela.valor_previsto ?? 0);
         const valorAtualContrato = Number(contratoData?.valor_total_contrato ?? NaN);
         const ref = parcela.sub_indice
             ? `${parcela.numero_referencia}-${parcela.sub_indice}`

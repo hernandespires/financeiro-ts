@@ -17,6 +17,9 @@ export interface SharedClientFormState {
     closer: string;
     cnpj_vinculado: string;
     programa_fechado: string;
+    // A_VISTA 2x split fields (optional — registration-only)
+    parcela2_data?: string;
+    parcela2_valor_display?: string;
 }
 
 export interface SharedClientFormErrors {

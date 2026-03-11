@@ -27,11 +27,7 @@ export default function RootLayout({
     <html lang="pt-BR">
       <body
         suppressHydrationWarning
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-cover bg-center bg-no-repeat bg-fixed min-h-screen text-white`}
-        style={{
-          backgroundImage: "url('/wallpaper.png')",
-          backgroundColor: "#000000ff" // Cor de segurança caso a imagem demore 1 segundo para carregar
-        }}
+        className={`${geistSans.variable} ${geistMono.variable} bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-neutral-900 via-[#050505] to-black min-h-screen text-white antialiased`}
       >
         {/* Floating Header */}
         <div className="max-w-7xl mx-auto pt-6 px-4">

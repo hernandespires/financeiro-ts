@@ -2,9 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { Lbl, FieldError, inp, inpErr } from '@/components/ui/FormFields';
-import { maskCnpjEin, formatPhone } from '@/lib/masks';
+import { formatPhone } from '@/lib/masks';
 import {
-    validateCnpjEin,
     validatePhone,
     validateAniversario,
     getMax18YearsAgo,
@@ -18,9 +17,9 @@ import type {
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 interface ClientDataFieldsProps {
-    form: Pick<SharedClientFormState, 'nome' | 'empresa' | 'cnpj' | 'telefone' | 'aniversario'>;
+    form: Pick<SharedClientFormState, 'nome' | 'empresa' | 'telefone' | 'aniversario'>;
     set: FieldSetter;
-    errors: Pick<SharedClientFormErrors, 'cnpj' | 'telefone' | 'aniversario'>;
+    errors: Pick<SharedClientFormErrors, 'telefone' | 'aniversario'>;
     setErrors: ErrorSetter;
     /** Fires when phone prefix auto-detects a country label (e.g. "Brasil", "Estados Unidos") */
     onCountryDetected?: (paisLabel: string) => void;
@@ -36,11 +35,6 @@ export default function ClientDataFields({
 }: ClientDataFieldsProps) {
     const [isMounted, setIsMounted] = useState(false);
     useEffect(() => setIsMounted(true), []);
-
-    function handleCnpjChange(raw: string) {
-        set('cnpj', maskCnpjEin(raw));
-        if (errors.cnpj) setErrors({ cnpj: undefined });
-    }
 
     function handlePhoneChange(raw: string) {
         const formatted = formatPhone(raw);
@@ -80,19 +74,6 @@ export default function ClientDataFields({
                 />
             </div>
 
-            {/* CNPJ / EIN */}
-            <div>
-                <Lbl required>CNPJ / EIN</Lbl>
-                <input
-                    value={form.cnpj}
-                    onChange={e => handleCnpjChange(e.target.value)}
-                    onBlur={() => setErrors({ cnpj: validateCnpjEin(form.cnpj) })}
-                    type="text"
-                    placeholder="XX-XXXXXXX ou XX.XXX.XXX/XXXX-XX"
-                    className={errors.cnpj ? inpErr : inp}
-                />
-                <FieldError msg={errors.cnpj} />
-            </div>
 
             {/* Telefone */}
             <div>

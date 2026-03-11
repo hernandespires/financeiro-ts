@@ -11,14 +11,15 @@ import Modal from "@/components/ui/Modal";
 export interface ParcelaForActions {
     id: string;
     valor_previsto: number;
+    valor_bruto?: number | null;
+    imposto_percentual?: number | null;
     status_manual_override: string;
     numero_referencia?: number;
     sub_indice?: number | null;
     forma_pagamento_contrato?: string;
     observacao?: string | null;
     data_vencimento?: string;
-    hasPagamento?: boolean; // true = already paid in pagamentos table, hides edit/delete
-    /** Needed for the renewal flow to create a new contract on the same client */
+    hasPagamento?: boolean;
     contrato_id?: string | null;
     cliente_id?: string | null;
 }
@@ -49,7 +50,7 @@ function ErrorMsg({ msg }: { msg: string | null }) {
     );
 }
 
-// ─── Payment Modal ────────────────────────────────────────────────────────────
+// ─── Payment Modal — Reverse Math Calculator ─────────────────────────────────
 function PaymentModal({
     parcela,
     onClose,
@@ -59,63 +60,116 @@ function PaymentModal({
     onClose: () => void;
     onSuccess: () => void;
 }) {
-    const [valorPago, setValorPago] = useState(parcela.valor_previsto.toFixed(2));
+    const brutoOriginal = parcela.valor_bruto ?? parcela.valor_previsto ?? 0;
+    const impostoPerc = parcela.imposto_percentual ?? 0;
+
+    const [valorPlataforma, setValorPlataforma] = useState(brutoOriginal.toFixed(2));
     const [dataPagamento, setDataPagamento] = useState(todayISO());
-    const [plataforma, setPlataforma] = useState(parcela.forma_pagamento_contrato || "PIX");
-    const [observacao, setObservacao] = useState(parcela.observacao || "");
+    const [plataforma, setPlataforma] = useState(parcela.forma_pagamento_contrato || 'PIX');
+    const [observacao, setObservacao] = useState(parcela.observacao || '');
     const [isPending, startTransition] = useTransition();
     const [error, setError] = useState<string | null>(null);
 
+    // ── Reverse-Math (derived, no state) ──────────────────────────────────────
+    const numPlataforma = parseFloat(valorPlataforma) || 0;               // arrived on platform
+    const taxaCalculada = Math.max(0, brutoOriginal - numPlataforma);      // what the platform took
+    const impostoCalculado = numPlataforma * (impostoPerc / 100);          // withheld tax
+    const liquidoFinal = Math.max(0, numPlataforma - impostoCalculado);    // real net
+
     function handleSalvar() {
         setError(null);
-        const val = parseFloat(valorPago);
-        if (isNaN(val) || val <= 0) { setError("Informe um valor válido."); return; }
+        if (numPlataforma <= 0) { setError('Informe o valor que chegou na plataforma.'); return; }
         startTransition(async () => {
-            const res = await registrarPagamentoCompleto(parcela.id, val, dataPagamento, plataforma, observacao || undefined);
+            const res = await registrarPagamentoCompleto(
+                parcela.id,
+                liquidoFinal,
+                taxaCalculada,
+                impostoCalculado,
+                0,              // jurosAplicado — handled automatically in future
+                dataPagamento,
+                plataforma,
+                observacao || undefined
+            );
             if (res.ok) { onSuccess(); onClose(); }
-            else setError(res.error ?? "Erro desconhecido.");
+            else setError(res.error ?? 'Erro desconhecido.');
         });
     }
+
+    const fmtNum = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+    const SummaryRow = ({ label, value, variant = 'normal', bold = false }: {
+        label: string; value: string; variant?: 'normal' | 'deduct' | 'total' | 'muted'; bold?: boolean;
+    }) => {
+        const colors = {
+            normal: 'text-gray-300',
+            deduct: 'text-red-400',
+            total: 'text-green-400',
+            muted: 'text-gray-500',
+        };
+        return (
+            <div className="flex items-center justify-between py-1.5 border-b border-white/[0.04] last:border-0">
+                <span className={`text-[11px] ${bold ? 'font-bold' : ''} text-gray-500`}>{label}</span>
+                <span className={`text-[11px] font-mono ${bold ? 'font-bold' : ''} ${colors[variant]}`}>{value}</span>
+            </div>
+        );
+    };
 
     return (
         <Modal
             onClose={onClose}
             title="Registrar Pagamento"
-            subtitle={`Valor previsto: ${brl(parcela.valor_previsto)}`}
+            subtitle={`Valor previsto (líquido): ${brl(parcela.valor_previsto)}`}
             icon={<CreditCard size={18} className="text-green-400" />}
         >
             <div className="flex flex-col gap-4">
-                <div className="flex flex-col gap-1.5">
-                    <label className={labelCls}>Valor Pago (R$)</label>
-                    <input type="number" min="0.01" step="0.01" value={valorPago}
-                        onChange={(e) => setValorPago(e.target.value)} className={inputCls} />
+
+                {/* Inputs Row 1: Platform + Date */}
+                <div className="grid grid-cols-2 gap-3">
+                    <div className="flex flex-col gap-1.5">
+                        <label className={labelCls}>Plataforma</label>
+                        <select value={plataforma} onChange={(e) => setPlataforma(e.target.value)}
+                            className={inputCls + " cursor-pointer"}>
+                            {["STRIPE BRASIL", "STRIPE EUA", "IUGU", "LOJA", "PIX", "APP DE TRANSFERÊNCIA", "DINHEIRO"].map(p => (
+                                <option key={p} value={p} className="bg-[#111] text-white">{p}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                        <label className={labelCls}>Data do Pagamento</label>
+                        <input type="date" value={dataPagamento}
+                            onChange={(e) => setDataPagamento(e.target.value)} className={inputCls} />
+                    </div>
                 </div>
 
+                {/* Main input: what landed on platform */}
                 <div className="flex flex-col gap-1.5">
-                    <label className={labelCls}>Data do Pagamento</label>
-                    <input type="date" value={dataPagamento}
-                        onChange={(e) => setDataPagamento(e.target.value)} className={inputCls} />
+                    <label className={labelCls}>
+                        Valor Recebido na Plataforma (R$)
+                        <span className="ml-2 text-orange-400 normal-case font-normal">← digite aqui</span>
+                    </label>
+                    <input type="number" min="0.01" step="0.01" value={valorPlataforma}
+                        onChange={(e) => setValorPlataforma(e.target.value)}
+                        placeholder={brutoOriginal.toFixed(2)}
+                        className={`${inputCls} text-orange-300 font-bold text-base`}
+                        autoFocus />
+                    <p className="text-[10px] text-gray-600">Bruto esperado: {fmtNum(brutoOriginal)}{impostoPerc > 0 ? ` · Imposto: ${impostoPerc}%` : ''}</p>
                 </div>
 
-                <div className="flex flex-col gap-1.5">
-                    <label className={labelCls}>Plataforma</label>
-                    <select value={plataforma} onChange={(e) => setPlataforma(e.target.value)}
-                        className={inputCls + " cursor-pointer"}>
-                        <option value="STRIPE BRASIL" className="bg-[#111] text-white">STRIPE BRASIL</option>
-                        <option value="STRIPE EUA" className="bg-[#111] text-white">STRIPE EUA</option>
-                        <option value="IUGU" className="bg-[#111] text-white">IUGU</option>
-                        <option value="LOJA" className="bg-[#111] text-white">LOJA</option>
-                        <option value="PIX" className="bg-[#111] text-white">PIX</option>
-                        <option value="APP DE TRANSFERÊNCIA" className="bg-[#111] text-white">APP DE TRANSFERÊNCIA</option>
-                        <option value="DINHEIRO" className="bg-[#111] text-white">DINHEIRO</option>
-                    </select>
+                {/* ── Resumo da Transação ── */}
+                <div className="rounded-xl bg-white/[0.02] border border-white/10 px-4 py-3 flex flex-col">
+                    <p className="text-[9px] font-bold text-orange-500 uppercase tracking-widest mb-2">Resumo da Transação</p>
+                    <SummaryRow label="(=) Bruto Esperado" value={fmtNum(brutoOriginal)} bold />
+                    <SummaryRow label="(−) Taxa Plataforma (calculada)" value={fmtNum(taxaCalculada)} variant="deduct" />
+                    {impostoPerc > 0 && <SummaryRow label={`(−) Imposto Retido (${impostoPerc}%)`} value={fmtNum(impostoCalculado)} variant="deduct" />}
+                    <SummaryRow label="(=) Líquido Real" value={fmtNum(liquidoFinal)} variant="total" bold />
                 </div>
 
+                {/* Observação */}
                 <div className="flex flex-col gap-1.5">
                     <label className={labelCls}>Observações (Opcional)</label>
                     <textarea value={observacao} onChange={(e) => setObservacao(e.target.value)}
                         placeholder="Ex: Atrasou por problema no cartão..."
-                        className={inputCls + " resize-none h-20"} />
+                        className={inputCls + " resize-none h-16"} />
                 </div>
 
                 <ErrorMsg msg={error} />
@@ -124,7 +178,7 @@ function PaymentModal({
             <div className="flex gap-3 justify-end">
                 <Button variant="outline" onClick={onClose} disabled={isPending}>Cancelar</Button>
                 <Button variant="success" onClick={handleSalvar} isLoading={isPending} icon={<Check size={14} strokeWidth={2.5} />}>
-                    {isPending ? "Salvando…" : "Confirmar"}
+                    {isPending ? 'Salvando…' : `Confirmar — ${fmtNum(liquidoFinal)}`}
                 </Button>
             </div>
         </Modal>

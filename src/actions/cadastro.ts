@@ -10,7 +10,6 @@ export interface DadosCadastroCompleto {
     tipo_cadastro: TipoCadastro;
     nome: string;
     empresa: string;
-    cnpj: string;
     telefone: string;
     cidade: string;
     estado: string;
@@ -26,12 +25,15 @@ export interface DadosCadastroCompleto {
     forma_pagamento: string;
     periodicidade?: string;
     data_inicio: string;
-    valor_total: number;
+    valor_parcela_bruto: number;
     periodo_meses: number;
     porcentagem_imposto: number;
     categoria_faturamento: string;
     parcelas_com_valor?: number;
     parcela_atual?: number;
+    parcela1_data?: string;
+    parcela2_data?: string;
+    parcela2_valor?: number;
 }
 
 export async function cadastrarClienteCompleto(dados: DadosCadastroCompleto) {
@@ -40,17 +42,6 @@ export async function cadastrarClienteCompleto(dados: DadosCadastroCompleto) {
     try {
         await requireAuth();
         console.log(`Iniciando cadastro [${dados.tipo_cadastro}]:`, dados.nome);
-
-        // --- 1. VERIFICA CNPJ DUPLICADO ---
-        const { data: clienteExistente } = await supabaseAdmin
-            .from('clientes')
-            .select('id')
-            .eq('cnpj_contrato', dados.cnpj)
-            .maybeSingle();
-
-        if (clienteExistente) {
-            throw new Error(`Este CNPJ / EIN (${dados.cnpj}) já está cadastrado no sistema.`);
-        }
 
         // --- 2. BUSCANDO OS IDs RELACIONAIS ---
         const { data: agencia } = await supabaseAdmin.from('dim_agencias').select('id').eq('nome', dados.agencia).single();
@@ -67,7 +58,6 @@ export async function cadastrarClienteCompleto(dados: DadosCadastroCompleto) {
         const novoCliente = {
             nome_cliente: dados.nome,
             empresa_label: dados.empresa,
-            cnpj_contrato: dados.cnpj,
             telefone: dados.telefone || null,
             cidade: dados.cidade || null,
             estado: dados.estado || null,
@@ -110,13 +100,27 @@ export async function cadastrarClienteCompleto(dados: DadosCadastroCompleto) {
         let quantidade_parcelas_total = mesesSeguros * multiplicador;
 
         if (dados.tipo_cadastro === 'A_VISTA') {
-            quantidade_parcelas_total = quantidadeComValor;
+            // For A_VISTA, parcelas_total = mesesSeguros (contract duration)
+            // so the renewal marker fires at the right time, not based on billing splits
+            quantidade_parcelas_total = mesesSeguros;
         }
 
-        let divisor = quantidade_parcelas_total > 0 ? quantidade_parcelas_total : 1;
-        if (dados.tipo_cadastro === 'A_VISTA') divisor = quantidadeComValor;
+        // ── Gross & Net per parcela (NO division — user inputs per-parcela bruto directly) ──────
+        const valor_bruto_parcela = Number(dados.valor_parcela_bruto);
+        const imposto = Number(dados.porcentagem_imposto) || 0;
+        const valor_liquido_parcela = Number((valor_bruto_parcela * (1 - (imposto / 100))).toFixed(2));
 
-        const valor_parcela_calculado = Number((Number(dados.valor_total) / divisor).toFixed(2));
+        // For A_VISTA 2x: total = sum of both explicit brutoes
+        // For A_VISTA 1x: total = just the one bruto
+        // For others: total = bruto × quantidade_parcelas_total
+        let valor_total_contrato: number;
+        if (dados.tipo_cadastro === 'A_VISTA' && quantidadeComValor === 2 && dados.parcela2_valor) {
+            valor_total_contrato = Number((valor_bruto_parcela + Number(dados.parcela2_valor)).toFixed(2));
+        } else if (dados.tipo_cadastro === 'A_VISTA') {
+            valor_total_contrato = valor_bruto_parcela;
+        } else {
+            valor_total_contrato = Number((valor_bruto_parcela * quantidade_parcelas_total).toFixed(2));
+        }
 
         // --- 4. INSERE O CONTRATO ---
         let tipoContratoEnum = 'RECORRENTE';
@@ -133,10 +137,10 @@ export async function cadastrarClienteCompleto(dados: DadosCadastroCompleto) {
             tipo_contrato: tipoContratoEnum,
             periodicidade: periodicidadeFinal,
             data_inicio: dados.data_inicio,
-            valor_total_contrato: Number(dados.valor_total),
-            valor_base_parcela: valor_parcela_calculado,
-            parcelas_total: quantidade_parcelas_total, // Garantido de ser um Inteiro > 0
-            imposto_percentual: Number(dados.porcentagem_imposto) || 0,
+            valor_total_contrato: valor_total_contrato,
+            valor_base_parcela: valor_bruto_parcela,
+            parcelas_total: quantidade_parcelas_total,
+            imposto_percentual: imposto,
             cnpj_vinculado: dados.cnpj_vinculado,
             forma_pagamento: dados.forma_pagamento
         };
@@ -154,27 +158,43 @@ export async function cadastrarClienteCompleto(dados: DadosCadastroCompleto) {
         let dataVenc = new Date(`${dados.data_inicio}T12:00:00Z`);
 
         if (dados.tipo_cadastro === 'A_VISTA') {
-            // LÓGICA DO À VISTA INTELIGENTE
-            for (let i = 1; i <= quantidadeComValor; i++) {
+            // ── Explicit push — no loop ───────────────────────────────────────────────────────
+
+            // Parcela 1 — always present
+            // Use explicit parcela1_data if provided (2x split), else fall back to data_inicio
+            const p1_data_venc = dados.parcela1_data || dados.data_inicio;
+            parcelasParaInserir.push({
+                contrato_id: contrato.id,
+                numero_referencia: 1,
+                sub_indice: 0,
+                data_vencimento: p1_data_venc,
+                valor_bruto: valor_bruto_parcela,
+                valor_previsto: valor_liquido_parcela,
+                tipo_parcela: 'CONTRATO',
+                categoria: 'NOVOS CLIENTES',
+                status_manual_override: 'NORMAL',
+                observacao: quantidadeComValor === 2 ? 'Pagamento 1/2 (À Vista)' : 'Pagamento à Vista',
+                data_disponibilidade_prevista: calcularDataDisponibilidade(p1_data_venc, dados.forma_pagamento),
+            });
+
+            // Parcela 2 — only when 2x split
+            if (quantidadeComValor === 2 && dados.parcela2_data && dados.parcela2_valor) {
+                const p2_bruto = Number(dados.parcela2_valor);
+                const p2_liquido = Number((p2_bruto * (1 - (imposto / 100))).toFixed(2));
+
                 parcelasParaInserir.push({
                     contrato_id: contrato.id,
-                    numero_referencia: i,
+                    numero_referencia: 2,
                     sub_indice: 0,
-                    data_vencimento: dataVenc.toISOString().split('T')[0],
-                    valor_previsto: valor_parcela_calculado,
+                    data_vencimento: dados.parcela2_data,
+                    valor_bruto: p2_bruto,
+                    valor_previsto: p2_liquido,
                     tipo_parcela: 'CONTRATO',
-                    categoria: i === 1 ? 'NOVOS CLIENTES' : 'À VISTA',
+                    categoria: 'À VISTA',
                     status_manual_override: 'NORMAL',
-                    observacao: `Pagamento ${i}/${quantidadeComValor} (À Vista)`,
-                    data_disponibilidade_prevista: calcularDataDisponibilidade(
-                        dataVenc.toISOString().split('T')[0],
-                        dados.forma_pagamento
-                    ),
+                    observacao: 'Pagamento 2/2 (À Vista)',
+                    data_disponibilidade_prevista: calcularDataDisponibilidade(dados.parcela2_data, dados.forma_pagamento),
                 });
-
-                if (periodicidadeFinal === 'SEMANAL') dataVenc.setDate(dataVenc.getDate() + 7);
-                else if (periodicidadeFinal === 'QUINZENAL') dataVenc.setDate(dataVenc.getDate() + 15);
-                else dataVenc.setMonth(dataVenc.getMonth() + 1);
             }
 
             // A_VISTA renewal marker is now added universally below
@@ -183,7 +203,7 @@ export async function cadastrarClienteCompleto(dados: DadosCadastroCompleto) {
             // LÓGICA UNIVERSAL (RECORRENTE, PONTUAL E ANTIGO) -> HISTÓRICO COMPLETO
 
             for (let i = 1; i <= quantidade_parcelas_total; i++) {
-                let valor = valor_parcela_calculado;
+                let valor = valor_bruto_parcela;
                 let statusManual = 'NORMAL';
 
                 // Respeita a Categoria do Front, mas aplica inteligência se for BASE
@@ -202,7 +222,8 @@ export async function cadastrarClienteCompleto(dados: DadosCadastroCompleto) {
                     numero_referencia: i,
                     sub_indice: 0,
                     data_vencimento: dataVenc.toISOString().split('T')[0],
-                    valor_previsto: valor,
+                    valor_bruto: valor_bruto_parcela,
+                    valor_previsto: valor_liquido_parcela,
                     tipo_parcela: 'CONTRATO',
                     categoria: categoriaDefinida,
                     status_manual_override: statusManual,
@@ -229,6 +250,7 @@ export async function cadastrarClienteCompleto(dados: DadosCadastroCompleto) {
             numero_referencia: parcelasParaInserir.length + 1,
             sub_indice: 0,
             data_vencimento: dataFimContrato.toISOString().split('T')[0],
+            valor_bruto: 0,
             valor_previsto: 0,
             tipo_parcela: 'ADICIONAL',
             categoria: 'RENOVAÇÕES',

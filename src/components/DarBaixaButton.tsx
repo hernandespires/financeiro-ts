@@ -30,6 +30,9 @@ export default function DarBaixaButton({ parcelaId, valorPrevisto, isPago }: Dar
             const res = await registrarPagamentoCompleto(
                 parcelaId,
                 valorPrevisto,
+                0,        // taxaPlataforma — quick-pay has no gateway fee
+                0,        // impostoRetido — not applicable for quick-pay
+                0,        // jurosAplicado — no interest in quick-pay
                 today,
                 "PIX"
             );
