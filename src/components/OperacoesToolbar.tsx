@@ -2,7 +2,7 @@
 
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useTransition, useCallback } from "react";
-import { Search, X } from "lucide-react";
+import { Search, X, ChevronLeft, ChevronRight } from "lucide-react";
 
 interface OperacoesToolbarProps {
     agencias: string[];      // distinct list from current data
@@ -12,6 +12,9 @@ interface OperacoesToolbarProps {
     agencia: string;
     categoria: string;
     search: string;
+    currentMonth: string;
+    monthLabelCap: string;
+    year: number;
 }
 
 const sel =
@@ -33,6 +36,9 @@ export default function OperacoesToolbar({
     agencia,
     categoria,
     search,
+    currentMonth,
+    monthLabelCap,
+    year,
 }: OperacoesToolbarProps) {
     const router = useRouter();
     const pathname = usePathname();
@@ -51,8 +57,44 @@ export default function OperacoesToolbar({
         [sp, pathname, router]
     );
 
+    const [y, mo] = currentMonth.split("-").map(Number);
+    const prevDate = new Date(y, mo - 2, 1);
+    const prevMonthUrlStr = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}`;
+    const nextDate = new Date(y, mo, 1);
+    const nextMonthUrlStr = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, "0")}`;
+
     return (
-        <div className="flex flex-col gap-3 px-4 py-3 border-b border-white/10 bg-white/[0.01]">
+        <div className="flex flex-col border-b border-white/[0.05]">
+            {/* Header Navegação Apple Style (Moved inside Toolbar) */}
+            <div className="flex flex-col items-center justify-center pt-8 pb-6 border-b border-white/[0.05] bg-white/[0.01]">
+                {/* Tabs */}
+                <div className="flex bg-[#111] border border-white/5 rounded-full p-1 mb-6">
+                    <button className="px-5 py-1.5 text-[11px] font-semibold rounded-full bg-white/10 text-white shadow-sm transition-all focus:outline-none">Mensal</button>
+                    <button onClick={() => router.push(`/contas-a-receber/previsao?period=annual&date=${year}-01`)} className="px-5 py-1.5 text-[11px] font-medium rounded-full text-gray-500 hover:text-white transition-all focus:outline-none">Anual</button>
+                </div>
+                {/* Date Navigator com Picker nativo */}
+                <div className="flex items-center gap-6 relative">
+                    <button onClick={() => push({ month: prevMonthUrlStr })} className="text-gray-500 hover:text-orange-500 transition-colors focus:outline-none"><ChevronLeft size={24} strokeWidth={1.5} /></button>
+                    
+                    <label className="relative cursor-pointer group flex items-center justify-center min-w-[16rem]">
+                        <h1 className="text-3xl font-medium text-white tracking-tight text-center group-hover:text-orange-400 transition-colors">
+                            {monthLabelCap}
+                        </h1>
+                        <input 
+                            type="month" 
+                            className="absolute opacity-0 inset-0 cursor-pointer w-full h-full"
+                            value={currentMonth}
+                            onChange={(e) => {
+                                if (e.target.value) push({ month: e.target.value });
+                            }}
+                        />
+                    </label>
+
+                    <button onClick={() => push({ month: nextMonthUrlStr })} className="text-gray-500 hover:text-orange-500 transition-colors focus:outline-none"><ChevronRight size={24} strokeWidth={1.5} /></button>
+                </div>
+            </div>
+
+            <div className="flex flex-col gap-3 px-6 py-4 bg-white/[0.02]">
             {/* Filters */}
             <div className="flex flex-wrap items-center gap-2">
                 {/* Status */}
@@ -111,6 +153,7 @@ export default function OperacoesToolbar({
                             <X size={11} />
                         </button>
                     )}
+                </div>
                 </div>
             </div>
         </div>

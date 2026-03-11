@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition, useEffect } from "react";
-import { Check, GitBranch, CreditCard, Scissors, Pencil, Trash2, AlertTriangle, RefreshCw, XCircle } from "lucide-react";
+import { Check, GitBranch, CreditCard, Scissors, Pencil, Trash2, AlertTriangle, RefreshCw, XCircle, Split } from "lucide-react";
 import { registrarPagamentoCompleto, desmembrarParcela, editarParcela, softDeleteParcela } from "@/actions/parcelas";
 import { renovarContrato } from "@/actions/renovacao";
 import Button from "@/components/ui/Button";
@@ -584,27 +584,27 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
 
     return (
         <>
-            {/* Action buttons — inline icon-only style kept intentionally compact */}
-            <div className="inline-flex items-center gap-1.5 flex-wrap justify-center">
+            {/* Action buttons — strictly side-by-side minimalist style */}
+            <div className="flex flex-row items-center justify-end gap-2">
                 {/* Dar Baixa */}
                 <button
                     onClick={() => setIsPaymentOpen(true)}
                     title="Registrar pagamento"
-                    className="inline-flex items-center gap-1 rounded-lg bg-green-500/10 border border-green-500/20 hover:bg-green-500/20 hover:border-green-500/40 text-green-400 px-2.5 py-1.5 text-[11px] font-semibold transition-all"
+                    className="inline-flex items-center justify-center h-7 px-3 gap-1 rounded-full bg-green-500/10 border border-green-500/20 hover:bg-green-500/20 hover:border-green-500/40 text-green-400 text-[10px] font-semibold transition-all whitespace-nowrap"
                 >
                     <Check size={11} strokeWidth={2.5} />
                     Dar Baixa
                 </button>
 
                 {/* Dividir — hidden for sub-installments */}
+                {/* Dividir — hidden for sub-installments */}
                 {showSplit && (
                     <button
                         onClick={() => setIsSplitOpen(true)}
                         title="Desmembrar parcela"
-                        className="inline-flex items-center gap-1 rounded-lg bg-orange-500/10 border border-orange-500/20 hover:bg-orange-500/20 hover:border-orange-500/40 text-orange-400 px-2.5 py-1.5 text-[11px] font-semibold transition-all"
+                        className="inline-flex items-center justify-center h-7 px-2.5 rounded-full bg-blue-500/10 border border-blue-500/20 hover:bg-blue-500/20 hover:border-blue-500/40 text-blue-400 transition-all"
                     >
-                        <GitBranch size={11} strokeWidth={2} />
-                        Dividir
+                        <Split size={11} strokeWidth={2.5} />
                     </button>
                 )}
 
@@ -613,9 +613,9 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
                     <button
                         onClick={() => setIsEditOpen(true)}
                         title="Editar parcela"
-                        className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-blue-500/10 border border-blue-500/20 hover:bg-blue-500/20 hover:border-blue-500/40 text-blue-400 transition-all"
+                        className="inline-flex items-center justify-center h-7 px-2.5 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 text-gray-300 transition-all"
                     >
-                        <Pencil size={11} />
+                        <Pencil size={11} strokeWidth={2.5} />
                     </button>
                 )}
 
@@ -624,9 +624,9 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
                     <button
                         onClick={() => setIsDeleteOpen(true)}
                         title="Excluir parcela"
-                        className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-red-500/10 border border-red-500/20 hover:bg-red-500/20 hover:border-red-500/40 text-red-400 transition-all"
+                        className="inline-flex items-center justify-center h-7 px-2.5 rounded-full bg-red-500/10 border border-red-500/20 hover:bg-red-500/20 hover:border-red-500/40 text-red-400 transition-all"
                     >
-                        <Trash2 size={11} />
+                        <Trash2 size={11} strokeWidth={2.5} />
                     </button>
                 )}
             </div>
