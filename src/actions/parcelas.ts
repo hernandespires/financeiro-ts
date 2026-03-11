@@ -30,13 +30,15 @@ export interface ActionResult {
 // ─────────────────────────────────────────────────────────────────────────────
 export async function registrarPagamentoCompleto(
     parcelaId: string,
-    valorLiquido: number,     // net cash landed in account after all deductions
-    taxaPlataforma: number,   // fee retained by Stripe/Iugu/PIX
-    impostoRetido: number,    // tax withheld (e.g. ISS, PIS, COFINS)
-    jurosAplicado: number,    // interest/penalties collected on top
+    valorPago: number,        // O que o cliente enviou pra plataforma (o que saiu do bolso dele, ou o valor bruto se ele mandou integral)
+    taxaPlataforma: number,   // Retenção do gateway de pgto (Stripe/Iugu/PIX)
+    impostoRetido: number,    // Imposto NF %
+    valorLiquidoReal: number, // O que de fato sobrou pra ts (valorPago - impostoRetido)
+    jurosAplicado: number,    // Juros por atraso
     dataPagamento: string,    // "YYYY-MM-DD"
     plataforma: string,       // e.g. "PIX", "IUGU", "STRIPE BRASIL", "STRIPE EUA"
-    observacao?: string
+    observacao?: string,
+    anexoUrl?: string         // URL of the uploaded receipt
 ): Promise<ActionResult> {
     try {
         await requireAuth();
@@ -81,18 +83,19 @@ export async function registrarPagamentoCompleto(
             return { ok: false, error: updateError.message };
         }
 
-        // ── Step 4: Insert ledger entry with correct disponivel_em ────────────────
         const { error: insertError } = await supabaseAdmin
             .from('pagamentos')
             .insert({
                 parcela_id: parcelaId,
                 data_pagamento: dataPagamento,
                 disponivel_em: disponivelEmReal,
-                valor_pago: valorLiquido,
+                valor_pago: valorPago,
                 taxa_gateway: taxaPlataforma,
                 imposto_retido: impostoRetido || null,
+                valor_liquido_real: valorLiquidoReal,
                 plataforma: plataforma as any,
                 status_pagamento: 'RECEBIDO' as any,
+                anexo_url: anexoUrl || null,
             });
 
         if (insertError) {
@@ -138,7 +141,7 @@ export async function registrarPagamentoCompleto(
 
         // ── Step 6: Audit log ─────────────────────────────────────────────────────
         const brlFmt2 = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
-        const logMsg = `Deu baixa na parcela ${ref} — Líq: ${brlFmt2(valorLiquido)} | Taxa: ${brlFmt2(taxaPlataforma)} | Imposto: ${brlFmt2(impostoRetido)} | Juros: ${brlFmt2(jurosAplicado)} — via ${plataforma}${rippleNote}`;
+        const logMsg = `Deu baixa na parcela ${ref} — Pago: ${brlFmt2(valorPago)} | Líq Real: ${brlFmt2(valorLiquidoReal)} | Taxa: ${brlFmt2(taxaPlataforma)} | Imposto: ${brlFmt2(impostoRetido)} | Juros: ${brlFmt2(jurosAplicado)} — via ${plataforma}${rippleNote}`;
         if (clienteId) {
             await registrarLog(clienteId, 'PARCELAS', logMsg);
         }
@@ -582,5 +585,40 @@ export async function editarParcelaStatus(
     } catch (err: any) {
         console.error('[editarParcelaStatus] Exceção:', err);
         return { ok: false, error: err.message || 'Erro desconhecido.' };
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 9. OBTER DETALHES COMPLETOS DA PARCELA
+//    Detailed cross-table fetch for the "Ficha da Parcela" deep dive modal.
+// ─────────────────────────────────────────────────────────────────────────────
+export async function getParcelaDetails(parcelaId: string) {
+    try {
+        await requireAuth();
+        const { data, error } = await supabaseAdmin
+            .from('parcelas')
+            .select(`
+                *,
+                pagamentos (*),
+                contratos (
+                    cliente_id, forma_pagamento, imposto_percentual, parcelas_total,
+                    clientes (
+                        nome_cliente, empresa_label, status_cliente, link_asana
+                    ),
+                    dim_agencias (
+                        nome
+                    )
+                )
+            `)
+            .eq('id', parcelaId)
+            .single();
+
+        if (error || !data) {
+            return { ok: false, error: error?.message ?? "Parcela não encontrada." };
+        }
+
+        return { ok: true, data };
+    } catch (err: any) {
+        return { ok: false, error: err.message };
     }
 }

@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 import { supabaseAdmin } from "@/lib/supabase";
 import { brl, fmtDate, daysLate, toDateStr } from "@/lib/utils";
-import { getRiskStatus, getContratosSujos } from "@/lib/financeRules";
 import ParcelaActions, { type ParcelaForActions } from "@/components/ParcelaActions";
 import OperacoesToolbar from "@/components/OperacoesToolbar";
 
@@ -73,11 +72,11 @@ interface Row extends RawParcela {
 // ─── Status Pill Minimalista (Apple Style) ────────────────────────────────────
 function StatusPill({ row }: { row: Row }) {
     const map: Record<RowStatus, string> = {
-        PAGO: "text-green-500 bg-green-500/10",
-        INADIMPLENTE: "text-red-500 bg-red-500/10",
-        PERDA: "text-red-500 bg-red-500/10",
-        EM_INADIMPLENCIA: "text-red-500 bg-red-500/10",
-        ATRASADO: "text-yellow-500 bg-yellow-500/10",
+        PAGO: "text-[#34C759] bg-[#34C759]/10",
+        INADIMPLENTE: "text-[#FF3B30] bg-[#FF3B30]/10",
+        PERDA: "text-[#FF3B30] bg-[#FF3B30]/10",
+        EM_INADIMPLENCIA: "text-[#FF3B30] bg-[#FF3B30]/10",
+        ATRASADO: "text-amber-500 bg-amber-500/10",
         VENCE_HOJE: "text-cyan-500 bg-cyan-500/10",
         A_RECEBER: "text-gray-400 bg-gray-500/10",
     };
@@ -85,13 +84,13 @@ function StatusPill({ row }: { row: Row }) {
         PAGO: "Pago",
         INADIMPLENTE: "Inadimplente",
         PERDA: "Perda",
-        EM_INADIMPLENCIA: "Em Inadimplência",
+        EM_INADIMPLENCIA: "Inadimplência",
         ATRASADO: "Atrasado",
         VENCE_HOJE: "Vence Hoje",
         A_RECEBER: "A Receber",
     };
     return (
-        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[9px] font-semibold whitespace-nowrap ${map[row.rowStatus]}`}>
+        <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[9px] font-semibold whitespace-nowrap ${map[row.rowStatus]}`}>
             {labels[row.rowStatus]}
         </span>
     );
@@ -101,36 +100,28 @@ function ClienteBadge({ status }: { status: string | null | undefined }) {
     if (!status) return <span className="text-gray-600">—</span>;
     const ok = status === "ATIVO";
     return (
-        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[9px] font-semibold whitespace-nowrap ${ok ? "bg-green-500/10 text-green-500" : "bg-red-500/10 text-red-500"}`}>
+        <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[9px] font-semibold whitespace-nowrap ${ok ? "bg-[#34C759]/10 text-[#34C759]" : "bg-[#FF3B30]/10 text-[#FF3B30]"}`}>
             {status}
         </span>
     );
 }
 
 // ─── KPI Card Minimalista ────────────────────────────────────────────────────
-function KpiCard({ icon, label, value, sub, color = "orange" }: { icon: React.ReactNode; label: string; value: string; sub?: string; color?: "orange" | "green" | "red" | "blue" | "gray"; }) {
-    const borders = {
-        orange: "border-orange-500/20",
-        green: "border-emerald-500/20",
-        red: "border-rose-500/30",
-        blue: "border-sky-500/20",
-        gray: "border-white/10",
-    };
+function KpiCard({ icon, label, value, color = "orange" }: { icon: React.ReactNode; label: string; value: string; color?: "orange" | "green" | "red" | "blue" | "gray"; }) {
     const textColors = {
-        orange: "text-orange-400",
-        green: "text-emerald-400",
-        red: "text-rose-400",
-        blue: "text-sky-400",
+        orange: "text-[#ffa300]",
+        green: "text-[#34C759]",
+        red: "text-[#FF3B30]",
+        blue: "text-blue-400",
         gray: "text-gray-400",
     };
     return (
-        <div className={`flex flex-col gap-1 rounded-2xl bg-white/[0.02] backdrop-blur-2xl border ${borders[color]} px-6 py-5 flex-1 min-w-[160px]`}>
-            <div className={`flex items-center gap-1.5 text-[9px] font-medium uppercase tracking-widest ${textColors[color]}`}>
+        <div className="flex flex-col gap-1 rounded-2xl bg-[#1C1C1E] border border-white/5 px-5 py-4 flex-1 min-w-[140px]">
+            <div className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest ${textColors[color]}`}>
                 {icon}
                 {label}
             </div>
-            <span className="text-2xl font-semibold leading-none text-white mt-1.5">{value}</span>
-            {sub && <span className="text-[9px] text-gray-500 mt-1">{sub}</span>}
+            <span className="text-xl font-bold leading-none text-white mt-2">{value}</span>
         </div>
     );
 }
@@ -148,13 +139,10 @@ export default async function OperacoesPage({ searchParams }: { searchParams: Pr
     const [y, mo] = currentMonth.split("-").map(Number);
     const monthLabel = new Date(currentMonth + "-01T12:00:00").toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
     const monthLabelCap = monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
-
-    const prevDate = new Date(y, mo - 2, 1);
-    const prevMonthUrlStr = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}`;
     
+    // Config dates
+    const prevDate = new Date(y, mo - 2, 1);
     const nextDate = new Date(y, mo, 1);
-    const nextMonthUrlStr = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, "0")}`;
-
     const startDate = `${currentMonth}-01`;
     const endDate = `${currentMonth}-${String(new Date(y, mo, 0).getDate()).padStart(2, "0")}`;
 
@@ -167,6 +155,9 @@ export default async function OperacoesPage({ searchParams }: { searchParams: Pr
         if (p.search) qs.set("search", p.search);
         return `?${qs.toString()}`;
     };
+    
+    const prevMonthUrl = buildMonthUrl(`${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}`);
+    const nextMonthUrl = buildMonthUrl(`${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, "0")}`);
 
     const { data: rawData } = await supabaseAdmin
         .from("parcelas")
@@ -181,13 +172,45 @@ export default async function OperacoesPage({ searchParams }: { searchParams: Pr
         .order("data_vencimento", { ascending: true });
 
     const allParcelas = (rawData ?? []) as unknown as RawParcela[];
-    const contratosSujos = getContratosSujos(allParcelas, todayStr);
+    
+    // ── Global Contagion Rule (Cross-Month) ──
+    const fifteenDaysAgo = new Date();
+    fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 15);
+    const fifteenAgoStr = toDateStr(fifteenDaysAgo);
+
+    const { data: globalSujos } = await supabaseAdmin
+        .from("parcelas")
+        .select(`
+            contrato_id,
+            status_manual_override,
+            contratos ( clientes ( id, status_cliente ) )
+        `)
+        .is("deleted_at", null)
+        .or(`data_vencimento.lte.${fifteenAgoStr},status_manual_override.eq.INADIMPLENTE,status_manual_override.eq.PERDA DE FATURAMENTO`);
+
+    const inadimplentesSet = new Set<string>();
+    (globalSujos || []).forEach((row: any) => {
+        const s = row.status_manual_override || "";
+        const isPagoOuIgnorado = ["PAGO", "INADIMPLENTE RECEBIDO", "RENOVAR CONTRATO", "FINALIZAR PROJETO", "QUEBRA DE CONTRATO", "RENOVADO"].includes(s);
+        
+        const ct = row.contratos;
+        const clientId = ct?.clientes?.id;
+        const statusCli = ct?.clientes?.status_cliente;
+
+        if (!isPagoOuIgnorado) {
+            if (row.contrato_id) inadimplentesSet.add(row.contrato_id);
+            if (clientId) inadimplentesSet.add(clientId);
+        }
+
+        if (statusCli === "INADIMPLENTE" && clientId) {
+            inadimplentesSet.add(clientId);
+        }
+    });
 
     const classified: Row[] = allParcelas
         .filter((rowP) => !rowP.deleted_at && !(rowP.contratos as any)?.deleted_at && !(rowP.contratos as any)?.clientes?.deleted_at && !["RENOVAR CONTRATO", "FINALIZAR PROJETO", "QUEBRA DE CONTRATO", "RENOVADO"].includes(rowP.status_manual_override ?? ""))
         .map((rowP): Row => {
             const dl = daysLate(rowP.data_vencimento, todayStr);
-            const risk = getRiskStatus(dl);
             const s = rowP.status_manual_override ?? "";
             const ct = rowP.contratos as any;
             const rawAgencia = ct?.dim_agencias;
@@ -195,16 +218,21 @@ export default async function OperacoesPage({ searchParams }: { searchParams: Pr
             const pagamentoRaw = rowP.pagamentos;
             const pagamento: RawPagamento | null = Array.isArray(pagamentoRaw) ? (pagamentoRaw[0] ?? null) : (pagamentoRaw ?? null);
 
+            const isSujo = dl >= 15 || s === "INADIMPLENTE" || s === "PERDA DE FATURAMENTO";
+
             let rowStatus: RowStatus = "A_RECEBER";
             if (s === "PAGO" || s === "INADIMPLENTE RECEBIDO") rowStatus = "PAGO";
-            else if (s === "INADIMPLENTE" || s === "PERDA DE FATURAMENTO") rowStatus = risk === "PERDA" ? "PERDA" : "INADIMPLENTE";
-            else if (s === "POSSUI INADIMPLENCIA" || (s === "NORMAL" && rowP.contrato_id && contratosSujos.has(rowP.contrato_id) && dl <= 0)) rowStatus = "EM_INADIMPLENCIA";
-            else if (risk === "PERDA") rowStatus = "PERDA";
-            else if (risk === "INADIMPLENTE") rowStatus = "INADIMPLENTE";
-            else if (risk === "ATRASO") rowStatus = "ATRASADO";
+            else if (isSujo) rowStatus = "INADIMPLENTE";
+            else if (dl > 0) rowStatus = "ATRASADO";
             else if (rowP.data_vencimento === todayStr) rowStatus = "VENCE_HOJE";
 
-            if (rowStatus === "INADIMPLENTE" || rowStatus === "EM_INADIMPLENCIA") {
+            const isContaminated = (rowP.contrato_id && inadimplentesSet.has(rowP.contrato_id)) || (ct?.clientes?.id && inadimplentesSet.has(ct.clientes.id));
+            if (rowStatus !== "PAGO" && rowStatus !== "INADIMPLENTE" && isContaminated) {
+                rowStatus = "EM_INADIMPLENCIA";
+            }
+
+            // The badge is always INADIMPLENTE red if the contract is dirty in any way
+            if (rowStatus === "INADIMPLENTE" || rowStatus === "EM_INADIMPLENCIA" || isContaminated) {
                 if (ct?.clientes) {
                     ct.clientes.status_cliente = "INADIMPLENTE";
                 }
@@ -241,8 +269,8 @@ export default async function OperacoesPage({ searchParams }: { searchParams: Pr
     const kpiTaxas = visible.reduce((s, r) => s + (r.pagamento?.taxa_gateway ?? 0), 0);
     const kpiAReceber = visible.filter(r => r.rowStatus !== "PAGO").reduce((s, r) => s + r.valor_previsto, 0);
 
-    const TH = "px-3 py-3 text-left text-[10px] font-medium text-gray-500 uppercase tracking-widest whitespace-nowrap select-none";
-    const TD = "px-3 py-3 whitespace-nowrap";
+    const TH = "py-2 px-1 text-left text-[9px] font-semibold text-gray-500 uppercase tracking-widest truncate select-none";
+    const TD = "py-2 px-1 text-[10px] md:text-[11px] truncate whitespace-nowrap";
 
     return (
         <div className="flex flex-col gap-6 max-w-[1600px] mx-auto pb-10">
@@ -252,23 +280,78 @@ export default async function OperacoesPage({ searchParams }: { searchParams: Pr
                 <span className="text-gray-700">/</span>
                 <Link href="/contas-a-receber" className="text-gray-500 hover:text-white transition-colors">Contas à Receber</Link>
                 <span className="text-gray-700">/</span>
-                <span className="text-orange-500 font-semibold">Mesa de Operações</span>
+                <span className="text-[#ffa300] font-semibold">Mesa de Operações</span>
             </nav>
 
-            {/* Header / Configuração e Navegação de Data mudaram para dentro do OperacoesToolbar (via props ou client component if needed) */}
-            {/* Como é Server Component, vamos passar esses dados para o Toolbar */}
+            {/* ── Date Navigator ── */}
+            <div className="flex items-center justify-between gap-4">
+                <div>
+                    <h1 className="text-2xl font-bold text-white tracking-tight leading-none mb-1">Mesa de Operações</h1>
+                    <p className="text-[10px] text-gray-500 font-medium">Controle financeiro e recebíveis</p>
+                </div>
+                
+                <div className="flex items-center gap-3">
+                    {/* Minimalist Tabs */}
+                    <div className="flex bg-[#111] border border-white/5 rounded-full p-1 h-9">
+                        <span className="px-4 py-1 text-[11px] font-semibold rounded-full bg-white/10 text-white shadow-sm flex items-center justify-center cursor-default">
+                            Mensal
+                        </span>
+                        <Link 
+                            href={`/contas-a-receber/previsao?period=annual&date=${y}-01`} 
+                            className="px-4 py-1 text-[11px] font-medium rounded-full text-gray-500 hover:text-white transition-all flex items-center justify-center"
+                        >
+                            Anual
+                        </Link>
+                    </div>
+
+                    {/* Compact Date Navigator */}
+                    <div className="flex items-center gap-1 bg-[#1C1C1E] border border-white/5 rounded-xl p-1 shadow-sm h-9">
+                        <Link
+                            href={prevMonthUrl}
+                            className="w-6 h-full flex items-center justify-center rounded-md text-gray-500 hover:bg-white/5 hover:text-white transition-all"
+                            aria-label="Mês anterior"
+                        >
+                            <ChevronLeft size={14} />
+                        </Link>
+
+                        <form method="GET" className="flex items-center gap-1.5 h-full">
+                        {p.status && <input type="hidden" name="status" value={p.status} />}
+                        {p.agencia && <input type="hidden" name="agencia" value={p.agencia} />}
+                        {p.categoria && <input type="hidden" name="categoria" value={p.categoria} />}
+                        {p.search && <input type="hidden" name="search" value={p.search} />}
+                        <input 
+                            type="month" 
+                            name="month" 
+                            defaultValue={currentMonth} 
+                            className="bg-black border border-white/10 rounded-md px-2 py-1.5 text-[11px] text-white font-mono focus:outline-none focus:border-[#ffa300] [color-scheme:dark]" 
+                        />
+                        <button type="submit" className="bg-[#ffa300] text-black px-3 py-1.5 rounded-md text-[11px] font-bold hover:bg-orange-400 transition-colors">
+                            Ir
+                        </button>
+                    </form>
+
+                        <Link
+                            href={nextMonthUrl}
+                            className="w-6 h-full flex items-center justify-center rounded-md text-gray-500 hover:bg-white/5 hover:text-white transition-all"
+                            aria-label="Próximo mês"
+                        >
+                            <ChevronRight size={14} />
+                        </Link>
+                    </div>
+                </div>
+            </div>
 
             {/* KPIs */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                <KpiCard icon={<Users size={10} />} label="Contas" value={`${kpiCount}`} color="gray" />
-                <KpiCard icon={<TrendingUp size={10} />} label="Previsto" value={brl(kpiTotalPrevisto)} color="orange" />
-                <KpiCard icon={<Landmark size={10} />} label="Recebido" value={brl(kpiFaturadoLiquido)} color="green" />
-                <KpiCard icon={<ArrowDownCircle size={10} />} label="Taxas" value={brl(kpiTaxas)} color="red" />
-                <KpiCard icon={<Wallet size={10} />} label="A Receber" value={brl(kpiAReceber)} color="blue" />
+                <KpiCard icon={<Users size={12} />} label="Contas" value={`${kpiCount}`} color="gray" />
+                <KpiCard icon={<TrendingUp size={12} />} label="Previsto" value={brl(kpiTotalPrevisto)} color="orange" />
+                <KpiCard icon={<Landmark size={12} />} label="Recebido" value={brl(kpiFaturadoLiquido)} color="green" />
+                <KpiCard icon={<ArrowDownCircle size={12} />} label="Taxas" value={brl(kpiTaxas)} color="red" />
+                <KpiCard icon={<Wallet size={12} />} label="A Receber" value={brl(kpiAReceber)} color="blue" />
             </div>
 
             {/* Tabela Principal */}
-            <div className="rounded-3xl bg-white/[0.02] backdrop-blur-2xl border border-white/[0.05] overflow-hidden mt-2">
+            <div className="rounded-2xl bg-[#1C1C1E] border border-white/5 shadow-2xl overflow-hidden mt-2 flex flex-col">
                 <OperacoesToolbar
                     agencias={agencias}
                     categorias={categorias}
@@ -276,33 +359,29 @@ export default async function OperacoesPage({ searchParams }: { searchParams: Pr
                     agencia={agenciaFilter}
                     categoria={categoriaFilter}
                     search={searchFilter}
-                    currentMonth={currentMonth}
-                    monthLabelCap={monthLabelCap}
-                    year={y}
                 />
                 
                 {visible.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-24 gap-3">
-                        <span className="text-4xl opacity-50">📭</span>
-                        <span className="text-sm font-medium text-gray-500">Nenhuma parcela para este filtro</span>
+                        <span className="text-4xl opacity-30">📭</span>
+                        <span className="text-sm font-medium text-gray-500">Nenhuma parcela no filtro</span>
                     </div>
                 ) : (
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-[11px]" style={{ minWidth: "1200px" }}>
+                    <div className="w-full">
+                        <table className="w-full table-fixed text-left text-[10px] md:text-[11px]">
                             <thead>
-                                <tr className="border-b border-white/5 bg-[#111]">
-                                    <th className={TH}>St. Cliente</th>
-                                    <th className={TH}>Categoria</th>
-                                    <th className={`${TH} min-w-[180px]`}>Cliente / Empresa</th>
-                                    <th className={TH}>Agência</th>
-                                    <th className={TH}>Vencimento</th>
-                                    <th className={TH}>Status</th>
-                                    <th className={`${TH} text-right`}>Atraso</th>
-                                    <th className={`${TH} text-center`}>Parcela</th>
-                                    <th className={`${TH} text-right`}>Valor Prev.</th>
-                                    <th className={`${TH} text-right`}>Pago (Líq)</th>
-                                    <th className={TH}>Plataforma</th>
-                                    <th className={`${TH} text-right min-w-[180px] w-[180px]`}>Ação</th>
+                                <tr className="border-b border-white/5 bg-black/40">
+                                    <th className={`${TH} w-[7%] pl-4`}>Status Cliente</th>
+                                    <th className={`${TH} w-[9%]`}>Categoria</th>
+                                    <th className={`${TH} w-[18%]`}>Cliente / Empresa</th>
+                                    <th className={`${TH} w-[8%]`}>Agência</th>
+                                    <th className={`${TH} w-[8%]`}>Vencimento</th>
+                                    <th className={`${TH} w-[9%]`}>Status</th>
+                                    <th className={`${TH} w-[5%]`}>Parcela</th>
+                                    <th className={`${TH} w-[10%] text-right`}>Valor Bruto</th>
+                                    <th className={`${TH} w-[10%] text-right`}>Valor Recebido</th>
+                                    <th className={`${TH} w-[6%]`}>Plataforma</th>
+                                    <th className={`${TH} w-[10%] text-right pr-4`}>Ação</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-white/5">
@@ -327,6 +406,7 @@ export default async function OperacoesPage({ searchParams }: { searchParams: Pr
                                         imposto_percentual: (ct?.imposto_percentual as number | null) ?? undefined,
                                         status_manual_override: row.status_manual_override,
                                         numero_referencia: row.numero_referencia ?? undefined,
+                                        sub_indice: row.sub_indice ?? undefined,
                                         forma_pagamento_contrato: ct?.forma_pagamento ?? undefined,
                                         data_vencimento: row.data_vencimento,
                                         hasPagamento: isPago,
@@ -335,50 +415,54 @@ export default async function OperacoesPage({ searchParams }: { searchParams: Pr
                                     };
 
                                     return (
-                                        <tr key={row.id} className={`group transition-colors bg-transparent hover:bg-white/[0.03] ${isPago ? "opacity-50" : ""}`}>
-                                            <td className={TD}><ClienteBadge status={cliente?.status_cliente} /></td>
+                                        <tr key={row.id} className={`group transition-colors hover:bg-white/[0.02] ${isPago ? "opacity-50" : ""}`}>
+                                            <td className={`${TD} pl-4`}><ClienteBadge status={cliente?.status_cliente} /></td>
                                             <td className={`${TD} text-gray-400 font-medium`}>{row.categoria ?? "—"}</td>
                                             <td className={TD}>
                                                 {clienteId ? (
-                                                    <div className="flex flex-col gap-0.5">
-                                                        <Link href={`/cliente/${clienteId}`} className="font-semibold text-white truncate max-w-[200px] hover:text-orange-400 transition-colors">
-                                                            {cliente.nome_cliente ?? "—"}
+                                                    <div className="flex flex-col truncate pr-2">
+                                                        <Link href={`/cliente/${clienteId}`} className="font-medium text-white truncate hover:text-[#ffa300] transition-colors">
+                                                            {cliente?.nome_cliente ?? "—"}
                                                         </Link>
-                                                        {(cliente.empresa_label || linkAsana) && (
-                                                            <div className="flex items-center gap-1.5 text-[9px] text-gray-500">
-                                                                <span className="truncate max-w-[150px]">{cliente.empresa_label}</span>
+                                                        {(cliente?.empresa_label || linkAsana) && (
+                                                            <div className="flex items-center gap-1.5 text-[10px] text-gray-500">
+                                                                <span className="truncate">{cliente?.empresa_label}</span>
                                                                 {linkAsana && (
-                                                                    <a href={linkAsana} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300" title="Abrir no Asana">
-                                                                        <ExternalLink size={10} />
+                                                                    <a href={linkAsana} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 shrink-0" title="Abrir no Asana">
+                                                                        <ExternalLink size={9} />
                                                                     </a>
                                                                 )}
                                                             </div>
                                                         )}
+                                                        {!cliente?.empresa_label && linkAsana && (
+                                                            <a href={linkAsana} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 text-[9px] text-purple-500 hover:text-purple-300 transition-colors mt-0.5" title="Abrir no Asana">
+                                                                <ExternalLink size={8} /> Asana
+                                                            </a>
+                                                        )}
                                                     </div>
-                                                ) : <span className="text-gray-500">Desconhecido</span>}
+                                                ) : <span className="text-gray-500 truncate">Desconhecido</span>}
                                             </td>
-                                            <td className={`${TD} text-gray-400`}>{row.agenciaNome ?? "—"}</td>
-                                            <td className={`${TD} font-mono ${isPago ? "line-through text-gray-500" : "text-gray-300"}`}>{fmtDate(row.data_vencimento)}</td>
+                                            <td className={`${TD} text-gray-400 truncate pr-2`}>{row.agenciaNome ?? "—"}</td>
+                                            <td className={`${TD} font-mono ${isPago ? "text-gray-500" : "text-gray-300"}`}>{fmtDate(row.data_vencimento)}</td>
                                             <td className={TD}><StatusPill row={row} /></td>
-                                            <td className={`${TD} text-right font-mono ${row.daysLateVal > 0 ? "text-red-400 font-medium" : "text-gray-600"}`}>{row.daysLateVal > 0 ? `${row.daysLateVal}d` : "—"}</td>
-                                            <td className={`${TD} text-center font-mono text-gray-500`}>{parcelaRef}</td>
-                                            <td className={`${TD} text-right font-medium text-white`}>{brl(row.valor_previsto)}</td>
-                                            <td className={`${TD} text-right font-medium ${isPago ? "text-green-400" : "text-gray-600"}`}>{isPago ? brl(row.pagamento?.valor_pago || 0) : "—"}</td>
-                                            <td className={`${TD} text-gray-500`}>{isPago ? row.pagamento?.plataforma : "—"}</td>
-                                            <td className={`${TD} text-right`}><ParcelaActions parcela={parcelaData} /></td>
+                                            <td className={`${TD} font-mono text-gray-500`}>{parcelaRef}</td>
+                                            <td className={`${TD} text-right font-mono font-medium text-white`}>{brl(row.valor_bruto ?? row.valor_previsto)}</td>
+                                            <td className={`${TD} text-right font-mono font-medium ${isPago ? "text-[#34C759]" : "text-gray-600"}`}>{isPago ? brl(row.pagamento?.valor_pago || 0) : "—"}</td>
+                                            <td className={`${TD} text-gray-500 text-[9px] uppercase tracking-wider truncate`}>{isPago ? row.pagamento?.plataforma : "—"}</td>
+                                            <td className={`${TD} text-right pr-4 overflow-visible`}><ParcelaActions parcela={parcelaData} /></td>
                                         </tr>
                                     );
                                 })}
                             </tbody>
                             <tfoot>
-                                <tr className="border-t border-white/10 bg-white/[0.01]">
-                                    <td colSpan={8} className="px-3 py-4 text-[9px] text-gray-600 uppercase tracking-widest font-bold">
-                                        {visible.length} parcelas · {monthLabelCap}
+                                <tr className="border-t border-white/5 bg-black/20">
+                                    <td colSpan={7} className="pl-4 py-3 text-[10px] text-gray-500 uppercase tracking-widest font-bold">
+                                        Total Filtro ({visible.length})
                                     </td>
-                                    <td className="px-3 py-4 text-right font-black text-white text-xs whitespace-nowrap">
+                                    <td className="px-1 py-3 text-right font-mono font-bold text-white text-[11px]">
                                         {brl(kpiTotalPrevisto)}
                                     </td>
-                                    <td className="px-3 py-4 text-right font-black text-green-400 text-xs whitespace-nowrap">
+                                    <td className="px-1 py-3 text-right font-mono font-bold text-[#34C759] text-[11px]">
                                         {kpiFaturadoLiquido > 0 ? brl(kpiFaturadoLiquido) : "—"}
                                     </td>
                                     <td colSpan={2} />

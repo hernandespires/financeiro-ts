@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useTransition, useEffect } from "react";
-import { Check, GitBranch, CreditCard, Scissors, Pencil, Trash2, AlertTriangle, RefreshCw, XCircle, Split } from "lucide-react";
-import { registrarPagamentoCompleto, desmembrarParcela, editarParcela, softDeleteParcela } from "@/actions/parcelas";
+import { Check, GitBranch, CreditCard, Scissors, Pencil, Trash2, AlertTriangle, RefreshCw, XCircle, Split, Eye, UploadCloud, Download, FileText } from "lucide-react";
+import { registrarPagamentoCompleto, desmembrarParcela, editarParcela, softDeleteParcela, getParcelaDetails } from "@/actions/parcelas";
 import { renovarContrato } from "@/actions/renovacao";
 import Button from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
@@ -50,7 +50,7 @@ function ErrorMsg({ msg }: { msg: string | null }) {
     );
 }
 
-// ─── Payment Modal — Reverse Math Calculator ─────────────────────────────────
+// ─── Payment Modal — Drag & Drop + Simplified Math ────────────────────────────
 function PaymentModal({
     parcela,
     onClose,
@@ -61,69 +61,120 @@ function PaymentModal({
     onSuccess: () => void;
 }) {
     const brutoOriginal = parcela.valor_bruto ?? parcela.valor_previsto ?? 0;
-    const impostoPerc = parcela.imposto_percentual ?? 0;
 
     const [valorPlataforma, setValorPlataforma] = useState(brutoOriginal.toFixed(2));
     const [dataPagamento, setDataPagamento] = useState(todayISO());
     const [plataforma, setPlataforma] = useState(parcela.forma_pagamento_contrato || 'PIX');
     const [observacao, setObservacao] = useState(parcela.observacao || '');
+    
+    // Drag & Drop state
+    const [file, setFile] = useState<File | null>(null);
+    const [isDragging, setIsDragging] = useState(false);
+    
     const [isPending, startTransition] = useTransition();
+    const [isUploading, setIsUploading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    // ── Reverse-Math (derived, no state) ──────────────────────────────────────
-    const numPlataforma = parseFloat(valorPlataforma) || 0;               // arrived on platform
-    const taxaCalculada = Math.max(0, brutoOriginal - numPlataforma);      // what the platform took
-    const impostoCalculado = numPlataforma * (impostoPerc / 100);          // withheld tax
-    const liquidoFinal = Math.max(0, numPlataforma - impostoCalculado);    // real net
+    const numPlataforma = parseFloat(valorPlataforma) || 0;
+
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files && e.target.files[0]) setFile(e.target.files[0]);
+    };
+    const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); setIsDragging(true); };
+    const handleDragLeave = () => setIsDragging(false);
+    const handleDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        setIsDragging(false);
+        if (e.dataTransfer.files && e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]);
+    };
 
     function handleSalvar() {
         setError(null);
-        if (numPlataforma <= 0) { setError('Informe o valor que chegou na plataforma.'); return; }
+        if (numPlataforma <= 0) { setError('Informe o valor recebido.'); return; }
+        
         startTransition(async () => {
+            setIsUploading(true);
+            let anexoUrl: string | undefined = undefined;
+
+            if (file) {
+                try {
+                    const { createClient } = await import('@supabase/supabase-js');
+                    const supabase = createClient(
+                        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+                        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+                    );
+                    const fileExt = file.name.split('.').pop();
+                    const fileName = `${parcela.id}_${Date.now()}.${fileExt}`;
+                    
+                    const { data: uploadData, error: uploadError } = await supabase.storage
+                        .from('comprovantes')
+                        .upload(fileName, file, { upsert: true });
+
+                    if (uploadError) throw uploadError;
+
+                    const { data: publicUrlData } = supabase.storage
+                        .from('comprovantes')
+                        .getPublicUrl(uploadData?.path || fileName);
+
+                    anexoUrl = publicUrlData.publicUrl;
+                } catch (err: any) {
+                    console.error("Upload error:", err);
+                    setError("Erro ao fazer upload do comprovante.");
+                    setIsUploading(false);
+                    return;
+                }
+            }
+
+            // --- NEW FINANCIAL MATH CALCULATIONS ---
+            const valorBruto = parcela.valor_bruto ?? parcela.valor_previsto ?? 0;
+            const impostoPerc = parcela.imposto_percentual ?? 0;
+            const taxaPlataforma = Math.max(0, valorBruto - numPlataforma);
+            const impostoRetido = numPlataforma * (impostoPerc / 100);
+            const valorLiquidoReal = numPlataforma - impostoRetido;
+
+            // --- LATE FEE MATH CALCULATIONS ---
+            let jurosAplicado = 0;
+            if (parcela.data_vencimento) {
+                const todayStr = new Date().toISOString().split("T")[0];
+                if (todayStr > parcela.data_vencimento) {
+                    const t1 = new Date(parcela.data_vencimento).getTime();
+                    const t2 = new Date(todayStr).getTime();
+                    const daysLate = Math.floor((t2 - t1) / (1000 * 3600 * 24));
+                    
+                    if (daysLate >= 10) {
+                        const mesesAtraso = Math.ceil(daysLate / 30);
+                        jurosAplicado = valorBruto * 0.015 * mesesAtraso;
+                    }
+                }
+            }
+
             const res = await registrarPagamentoCompleto(
                 parcela.id,
-                liquidoFinal,
-                taxaCalculada,
-                impostoCalculado,
-                0,              // jurosAplicado — handled automatically in future
+                numPlataforma, 
+                taxaPlataforma, 
+                impostoRetido, 
+                valorLiquidoReal,
+                jurosAplicado, 
                 dataPagamento,
                 plataforma,
-                observacao || undefined
+                observacao || undefined,
+                anexoUrl
             );
+            
+            setIsUploading(false);
             if (res.ok) { onSuccess(); onClose(); }
             else setError(res.error ?? 'Erro desconhecido.');
         });
     }
 
-    const fmtNum = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-
-    const SummaryRow = ({ label, value, variant = 'normal', bold = false }: {
-        label: string; value: string; variant?: 'normal' | 'deduct' | 'total' | 'muted'; bold?: boolean;
-    }) => {
-        const colors = {
-            normal: 'text-gray-300',
-            deduct: 'text-red-400',
-            total: 'text-green-400',
-            muted: 'text-gray-500',
-        };
-        return (
-            <div className="flex items-center justify-between py-1.5 border-b border-white/[0.04] last:border-0">
-                <span className={`text-[11px] ${bold ? 'font-bold' : ''} text-gray-500`}>{label}</span>
-                <span className={`text-[11px] font-mono ${bold ? 'font-bold' : ''} ${colors[variant]}`}>{value}</span>
-            </div>
-        );
-    };
-
     return (
         <Modal
             onClose={onClose}
             title="Registrar Pagamento"
-            subtitle={`Valor previsto (líquido): ${brl(parcela.valor_previsto)}`}
+            subtitle={`Valor previsto: ${brl(parcela.valor_previsto)}`}
             icon={<CreditCard size={18} className="text-green-400" />}
         >
             <div className="flex flex-col gap-4">
-
-                {/* Inputs Row 1: Platform + Date */}
                 <div className="grid grid-cols-2 gap-3">
                     <div className="flex flex-col gap-1.5">
                         <label className={labelCls}>Plataforma</label>
@@ -141,45 +192,275 @@ function PaymentModal({
                     </div>
                 </div>
 
-                {/* Main input: what landed on platform */}
                 <div className="flex flex-col gap-1.5">
-                    <label className={labelCls}>
-                        Valor Recebido na Plataforma (R$)
-                        <span className="ml-2 text-orange-400 normal-case font-normal">← digite aqui</span>
-                    </label>
+                    <label className={labelCls}>Valor Recebido (Líquido)</label>
                     <input type="number" min="0.01" step="0.01" value={valorPlataforma}
                         onChange={(e) => setValorPlataforma(e.target.value)}
-                        placeholder={brutoOriginal.toFixed(2)}
-                        className={`${inputCls} text-orange-300 font-bold text-base`}
+                        placeholder={(parcela.valor_bruto ?? parcela.valor_previsto ?? 0).toFixed(2)}
+                        className={`${inputCls} text-green-400 font-bold text-base`}
                         autoFocus />
-                    <p className="text-[10px] text-gray-600">Bruto esperado: {fmtNum(brutoOriginal)}{impostoPerc > 0 ? ` · Imposto: ${impostoPerc}%` : ''}</p>
                 </div>
 
-                {/* ── Resumo da Transação ── */}
-                <div className="rounded-xl bg-white/[0.02] border border-white/10 px-4 py-3 flex flex-col">
-                    <p className="text-[9px] font-bold text-orange-500 uppercase tracking-widest mb-2">Resumo da Transação</p>
-                    <SummaryRow label="(=) Bruto Esperado" value={fmtNum(brutoOriginal)} bold />
-                    <SummaryRow label="(−) Taxa Plataforma (calculada)" value={fmtNum(taxaCalculada)} variant="deduct" />
-                    {impostoPerc > 0 && <SummaryRow label={`(−) Imposto Retido (${impostoPerc}%)`} value={fmtNum(impostoCalculado)} variant="deduct" />}
-                    <SummaryRow label="(=) Líquido Real" value={fmtNum(liquidoFinal)} variant="total" bold />
+                {/* Drag and Drop Zone */}
+                <div className="flex flex-col gap-1.5">
+                    <label className={labelCls}>Comprovante (Opcional)</label>
+                    <div 
+                        onDragOver={handleDragOver}
+                        onDragLeave={handleDragLeave}
+                        onDrop={handleDrop}
+                        className={`relative w-full h-24 border-2 border-dashed rounded-xl flex flex-col items-center justify-center transition-all ${
+                            isDragging ? "border-orange-500 bg-orange-500/10" : "border-white/10 bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.04]"
+                        }`}
+                    >
+                        <input 
+                            type="file" 
+                            accept="image/*,.pdf" 
+                            onChange={handleFileChange} 
+                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                        />
+                        {file ? (
+                            <div className="flex flex-col items-center gap-1 text-center px-4">
+                                <Check size={20} className="text-green-400" />
+                                <span className="text-xs font-medium text-white truncate max-w-[200px]">{file.name}</span>
+                                <span className="text-[10px] text-gray-500">{(file.size / 1024 / 1024).toFixed(2)} MB</span>
+                            </div>
+                        ) : (
+                            <div className="flex flex-col items-center gap-1 text-center">
+                                <UploadCloud size={20} className="text-gray-400 mb-1" />
+                                <span className="text-xs font-medium text-gray-300">Arraste um PDF ou Imagem</span>
+                                <span className="text-[10px] text-gray-500">ou clique para selecionar</span>
+                            </div>
+                        )}
+                    </div>
                 </div>
 
-                {/* Observação */}
                 <div className="flex flex-col gap-1.5">
                     <label className={labelCls}>Observações (Opcional)</label>
                     <textarea value={observacao} onChange={(e) => setObservacao(e.target.value)}
-                        placeholder="Ex: Atrasou por problema no cartão..."
+                        placeholder="Ex: Pagamento recebido via app..."
                         className={inputCls + " resize-none h-16"} />
                 </div>
 
                 <ErrorMsg msg={error} />
             </div>
 
-            <div className="flex gap-3 justify-end">
-                <Button variant="outline" onClick={onClose} disabled={isPending}>Cancelar</Button>
-                <Button variant="success" onClick={handleSalvar} isLoading={isPending} icon={<Check size={14} strokeWidth={2.5} />}>
-                    {isPending ? 'Salvando…' : `Confirmar — ${fmtNum(liquidoFinal)}`}
+            <div className="flex gap-3 justify-end items-center mt-2">
+                <Button variant="outline" onClick={onClose} disabled={isPending || isUploading}>Cancelar</Button>
+                <Button variant="success" onClick={handleSalvar} isLoading={isPending || isUploading} icon={<Check size={14} strokeWidth={2.5} />}>
+                    {isUploading ? 'Anexando...' : isPending ? 'Salvando…' : `Confirmar Baixa`}
                 </Button>
+            </div>
+        </Modal>
+    );
+}
+
+// ─── Ficha da Parcela Modal (Deep Dive) ───────────────────────────────────────
+function ParcelaDetailsModal({
+    parcelaId,
+    onClose,
+}: {
+    parcelaId: string;
+    onClose: () => void;
+}) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [data, setData] = useState<any>(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string|null>(null);
+
+    useEffect(() => {
+        getParcelaDetails(parcelaId).then(res => {
+            if (res.ok) setData(res.data);
+            else setError(res.error ?? "Erro ao carregar detalhes.");
+            setLoading(false);
+        });
+    }, [parcelaId]);
+
+    if (loading) return (
+        <Modal onClose={onClose} title="Ficha da Parcela" subtitle="Carregando dados estruturais..." icon={<Eye size={18} className="text-blue-400" />}>
+            <div className="h-40 flex items-center justify-center"><RefreshCw size={24} className="animate-spin text-gray-600" /></div>
+        </Modal>
+    );
+
+    if (error || !data) return (
+        <Modal onClose={onClose} title="Ficha da Parcela" icon={<AlertTriangle size={18} className="text-red-400" />}>
+            <ErrorMsg msg={error || "Dados não encontrados."} />
+        </Modal>
+    );
+
+    const ct = data.contratos || {};
+    const cl = ct.clientes || {};
+    const pag = Array.isArray(data.pagamentos) ? data.pagamentos[0] : (data.pagamentos || null);
+    
+    const fmtNum = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
+    const anexoUrl = pag?.anexo_url;
+    const isPdf = anexoUrl?.toLowerCase().endsWith('.pdf');
+
+    // Calculations
+    const todayStr = new Date().toISOString().split("T")[0];
+    const vencimentoStr = data.data_vencimento || "";
+    let daysLate = 0;
+    if (vencimentoStr && todayStr > vencimentoStr) {
+        const t1 = new Date(vencimentoStr).getTime();
+        const t2 = new Date(todayStr).getTime();
+        daysLate = Math.floor((t2 - t1) / (1000 * 3600 * 24));
+    }
+
+    // Status logic (simulating page.tsx logic as requested)
+    let parcelStatus = data.status_manual_override;
+    if (parcelStatus === 'NORMAL') {
+        if (daysLate >= 15) parcelStatus = 'INADIMPLENTE';
+        else if (daysLate > 0) parcelStatus = 'ATRASADO';
+        else parcelStatus = 'EM DIA';
+    }
+
+    const isPago = parcelStatus === 'PAGO' || parcelStatus === 'INADIMPLENTE RECEBIDO';
+    const isSujo = parcelStatus === 'INADIMPLENTE' || parcelStatus === 'PERDA DE FATURAMENTO';
+
+    // Juros Dinâmico calculation
+    let jurosCalculado = data.juros_aplicado || 0;
+    if (!jurosCalculado && daysLate >= 10 && !isPago) {
+        const mesesAtraso = Math.ceil(daysLate / 30) || 1;
+        jurosCalculado = (data.valor_bruto || data.valor_previsto || 0) * 0.015 * mesesAtraso;
+    }
+    
+    // Predição Disponibilidade
+    let txPlatform = ct.forma_pagamento?.toUpperCase() || "";
+    if (pag) txPlatform = pag.plataforma.toUpperCase();
+    
+    let disponivelText = "—";
+    if (pag && pag.disponivel_em) {
+        disponivelText = pag.disponivel_em.split('-').reverse().join('/');
+    } else if (!isPago && vencimentoStr) {
+        // Estimate based on rules
+        const d = new Date(vencimentoStr);
+        if (txPlatform.includes('STRIPE')) d.setDate(d.getDate() + 5);
+        else if (txPlatform.includes('IUGU')) d.setDate(d.getDate() + 1);
+        else d.setDate(d.getDate() + 0); // PIX
+        disponivelText = `~ ${d.toISOString().split('T')[0].split('-').reverse().join('/')}`;
+    }
+
+    const SectionTitle = ({ label, color }: { label: string, color: string }) => (
+        <h3 className={`text-[10px] font-bold ${color} uppercase tracking-widest pl-1 mt-2 mb-1`}>{label}</h3>
+    );
+
+    const InfoBox = ({ label, value, highlight, link }: { label: string, value: string, highlight?: string, link?: string }) => (
+        <div className="flex flex-col p-3 rounded-xl bg-black border border-white/5">
+            <span className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">{label}</span>
+            {link ? (
+                <a href={link} target="_blank" rel="noopener noreferrer" className={`text-base font-medium break-words ${highlight || 'text-white hover:underline'}`}>{value}</a>
+            ) : (
+                <span className={`text-base font-medium break-words ${highlight || 'text-white'}`}>{value}</span>
+            )}
+        </div>
+    );
+
+    return (
+        <Modal onClose={onClose} title="Ficha da Parcela" subtitle={`Raio-X Completo da Fatura #${data.numero_referencia}`} icon={<Eye size={18} className="text-blue-400" />} maxWidth="5xl">
+            <div className="flex flex-col gap-4 w-full pb-2 overflow-y-auto max-h-[75vh] pr-2 custom-scrollbar">
+                
+                {/* 1. SECTION: DOSSIÊ DO CLIENTE */}
+                <div className="flex flex-col gap-1.5 bg-[#1C1C1E] p-4 rounded-2xl border border-white/5">
+                    <SectionTitle label="1. Dossiê do Cliente" color="text-gray-400" />
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mt-1">
+                        <InfoBox label="Nome" value={cl.nome_cliente || 'N/A'} highlight="text-white" />
+                        <InfoBox label="Empresa" value={cl.empresa_label || cl.nome_cliente || 'N/A'} />
+                        <div className="flex flex-col p-3 rounded-xl bg-black border border-white/5">
+                            <span className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">Status</span>
+                            <div className="mt-0.5">
+                                <span className={`px-2 py-0.5 rounded text-xs font-bold tracking-wider ${
+                                    cl.status_cliente === 'INADIMPLENTE' ? 'bg-[#FF3B30]/10 text-[#FF3B30]' : 
+                                    cl.status_cliente === 'ATIVO' ? 'bg-[#34C759]/10 text-[#34C759]' : 
+                                    'bg-white/10 text-gray-300'
+                                }`}>{cl.status_cliente || 'N/A'}</span>
+                            </div>
+                        </div>
+                        <InfoBox label="Categoria" value={data.categoria || 'N/A'} />
+                        <InfoBox label="Agência" value={ct.dim_agencias?.nome || '—'} />
+                        <InfoBox label="Board Asana" value={cl.link_asana ? "Abrir Link" : "—"} link={cl.link_asana} highlight={cl.link_asana ? "text-blue-400" : "text-gray-500"} />
+                    </div>
+                </div>
+
+                {/* 2. SECTION: RAIO-X DA PARCELA */}
+                <div className="flex flex-col gap-1.5 bg-[#1C1C1E] p-4 rounded-2xl border border-white/5">
+                    <SectionTitle label="2. Raio-X da Parcela" color="text-[#ffa300]" />
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mt-1">
+                        <InfoBox label="Parcela" value={`${data.numero_referencia}${data.sub_indice ? `-${data.sub_indice}` : ''} / ${ct.parcelas_total || data.numero_referencia}`} />
+                        <InfoBox label="Vencimento" value={vencimentoStr ? vencimentoStr.split('-').reverse().join('/') : '—'} />
+                        <div className="flex flex-col p-3 rounded-xl bg-black border border-white/5">
+                            <span className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">Status Op.</span>
+                            <div className="mt-0.5">
+                                <span className={`px-2 py-0.5 rounded text-xs font-bold tracking-wider ${
+                                    isPago ? 'bg-[#34C759]/10 text-[#34C759]' : 
+                                    isSujo || parcelStatus === 'ATRASADO' ? 'bg-[#FF3B30]/10 text-[#FF3B30]' : 
+                                    'bg-[#ffa300]/10 text-[#ffa300]'
+                                }`}>{parcelStatus}</span>
+                            </div>
+                        </div>
+                        <InfoBox label="Atraso (Dias)" value={daysLate > 0 && !isPago ? `${daysLate} dias` : '—'} highlight={daysLate > 0 && !isPago ? "text-[#FF3B30]" : "text-gray-500"} />
+                        <InfoBox label="Forma Pagamento" value={ct.forma_pagamento || '—'} />
+                        <InfoBox label="Observação" value={data.observacao || pag?.observacao || '—'} highlight={(data.observacao || pag?.observacao) ? "text-gray-300 whitespace-pre-wrap max-h-20 overflow-y-auto" : "text-gray-500"} />
+                    </div>
+                </div>
+
+                {/* 3. SECTION: AUDITORIA FINANCEIRA */}
+                <div className="flex flex-col gap-1.5 bg-[#1C1C1E] p-4 rounded-2xl border border-white/5">
+                    <div className="flex items-center justify-between">
+                        <SectionTitle label="3. Auditoria Financeira" color="text-[#34C759]" />
+                        <span className="text-xs font-semibold text-gray-500 bg-white/5 px-2 py-0.5 rounded-lg">FLUXO DO DINHEIRO</span>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mt-1">
+                        {/* 1 */} <InfoBox label="Valor Bruto" value={fmtNum(data.valor_bruto || data.valor_previsto)} highlight="text-white font-mono" />
+                        {/* 2 */} <InfoBox label="Previsto Líquido" value={fmtNum(data.valor_previsto)} highlight="text-[#ffa300] font-mono font-bold" />
+                        {/* 3 */} <InfoBox label="Valor Pago Plataforma" value={pag ? fmtNum(pag.valor_pago) : "—"} highlight={pag ? "text-white font-mono" : "text-gray-500 font-mono"} />
+                        {/* 4 */} <InfoBox label="Plataforma Recebimento" value={pag ? pag.plataforma : "—"} />
+                        {/* 5 */} <InfoBox label={`% Imposto NF (${ct.imposto_percentual || 0}%)`} value={pag ? fmtNum(pag.imposto_retido) : "—"} highlight="text-rose-400 font-mono" />
+                        
+                        {/* 6 */} <InfoBox label="Taxa Plataforma" value={pag ? fmtNum(pag.taxa_gateway) : "—"} highlight="text-rose-400 font-mono" />
+                        {/* 7 */} <InfoBox label="Juros Aplicado" value={fmtNum(jurosCalculado)} highlight={jurosCalculado > 0 ? "text-[#FF3B30] font-mono" : "text-gray-500 font-mono"} />
+                        {/* 8 */} <InfoBox label="Líquido Real Na Conta" value={pag && pag.valor_liquido_real !== undefined ? fmtNum(pag.valor_liquido_real) : "—"} highlight={pag ? "text-[#34C759] font-mono font-bold" : "text-gray-500 font-mono"} />
+                        {/* 9 */} <InfoBox label="Data Pagamento" value={pag && pag.data_pagamento ? pag.data_pagamento.split('-').reverse().join('/') : "—"} />
+                        {/* 10 */} <InfoBox label="Disponível Em" value={disponivelText} />
+                    </div>
+                </div>
+
+                {/* 4. SECTION: ANEXO */}
+                <div className="flex flex-col gap-1.5 bg-[#1C1C1E] p-4 rounded-2xl border border-white/5">
+                    <SectionTitle label="4. COMPROVANTE (ANEXO)" color="text-blue-400" />
+                    {anexoUrl ? (
+                        <>
+                            <div className="flex items-center justify-between mt-1">
+                                <span className="text-xs text-gray-400">Arquivo recebido e anexado.</span>
+                                <a href={anexoUrl} target="_blank" download rel="noopener noreferrer" className="text-[10px] font-semibold text-gray-400 hover:text-white flex items-center gap-1 transition-colors bg-black px-3 py-1.5 rounded-lg border border-white/10">
+                                    <Download size={10} /> Download / Abrir em nova guia
+                                </a>
+                            </div>
+                            
+                            {isPdf ? (
+                                <iframe src={`${anexoUrl}#toolbar=0`} className="w-full h-96 rounded-lg bg-white border border-white/10 mt-2" />
+                            ) : (
+                                <img src={anexoUrl} alt="Comprovante" 
+                                     className="w-full max-h-[600px] object-contain rounded-lg border border-white/10 mt-2" 
+                                     onError={(e) => {
+                                        const t = e.currentTarget;
+                                        t.style.display = 'none';
+                                        if (!t.dataset.errorDisplayed) {
+                                            t.dataset.errorDisplayed = "true";
+                                            t.insertAdjacentHTML('afterend', '<p class="text-sm text-red-400 mt-2">Falha ao carregar a imagem. Verifique se o arquivo existe e o bucket é público.</p>');
+                                        }
+                                     }} />
+                            )}
+                        </>
+                    ) : (
+                        <div className="mt-2 p-4 rounded-xl bg-black border border-white/5 text-center">
+                            <span className="text-gray-500 text-sm">Nenhum comprovante anexado.</span>
+                        </div>
+                    )}
+                </div>
+            </div>
+            
+            <div className="flex justify-end pt-4 border-t border-white/5">
+                <Button variant="outline" onClick={onClose}>Fechar Ficha</Button>
             </div>
         </Modal>
     );
@@ -511,6 +792,7 @@ function RenovarModal({
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
+    const [isDetailsOpen, setIsDetailsOpen] = useState(false);
     const [isPaymentOpen, setIsPaymentOpen] = useState(false);
     const [isSplitOpen, setIsSplitOpen] = useState(false);
     const [isEditOpen, setIsEditOpen] = useState(false);
@@ -531,10 +813,25 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
     // Already paid
     if (isPago) {
         return (
-            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-green-400/70">
-                <Check size={11} strokeWidth={2.5} />
-                Recebido
-            </span>
+            <div className="flex flex-row items-center justify-end gap-1.5 w-full">
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-green-400/70 h-6 px-2.5">
+                    <Check size={11} strokeWidth={2.5} />
+                    Recebido
+                </span>
+                <button
+                    onClick={() => setIsDetailsOpen(true)}
+                    title="Ver Ficha da Parcela"
+                    className="inline-flex items-center justify-center h-6 px-2.5 rounded-md bg-blue-500/10 border border-blue-500/10 hover:bg-blue-500/20 hover:border-blue-500/30 text-blue-400 transition-all"
+                >
+                    <Eye size={11} strokeWidth={2} />
+                </button>
+                {mounted && isDetailsOpen && (
+                    <ParcelaDetailsModal
+                        parcelaId={parcela.id}
+                        onClose={() => setIsDetailsOpen(false)}
+                    />
+                )}
+            </div>
         );
     }
 
@@ -545,12 +842,12 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
 
         return (
             <>
-                <div className="inline-flex gap-2 items-center justify-center">
+                <div className="flex flex-row items-center justify-end gap-1.5">
                     <button
                         onClick={() => setIsRenewOpen(true)}
                         disabled={!isLiberado}
                         title={!isLiberado ? "Aguarde a data de término do contrato" : "Processar renovação"}
-                        className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-lg bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500/20 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                        className="h-6 px-2.5 text-[10px] font-bold uppercase tracking-widest rounded-md bg-[#34C759]/10 text-[#34C759] border border-[#34C759]/20 hover:bg-[#34C759]/20 hover:border-[#34C759]/40 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
                     >
                         Renovar
                     </button>
@@ -558,7 +855,7 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
                         onClick={() => setIsNotRenewOpen(true)}
                         disabled={!isLiberado}
                         title={!isLiberado ? "Aguarde a data de término do contrato" : "Registrar cancelamento/fim"}
-                        className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-lg bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                        className="h-6 px-2.5 text-[10px] font-bold uppercase tracking-widest rounded-md bg-[#FF3B30]/10 text-[#FF3B30] border border-[#FF3B30]/20 hover:bg-[#FF3B30]/20 hover:border-[#FF3B30]/40 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
                     >
                         Não Renovar
                     </button>
@@ -576,55 +873,78 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
     // Not actionable statuses
     if (!isNormal) {
         return (
-            <span className="text-[11px] text-gray-600 font-medium">
-                {parcela.status_manual_override}
-            </span>
+            <div className="flex flex-row items-center justify-end gap-1.5 w-full">
+                <span className="text-[11px] text-gray-600 font-medium h-6 px-2.5 inline-flex items-center">
+                    {parcela.status_manual_override}
+                </span>
+                <button
+                    onClick={() => setIsDetailsOpen(true)}
+                    title="Ver Ficha da Parcela"
+                    className="inline-flex items-center justify-center h-6 px-2.5 rounded-md bg-blue-500/10 border border-blue-500/10 hover:bg-blue-500/20 hover:border-blue-500/30 text-blue-400 transition-all"
+                >
+                    <Eye size={11} strokeWidth={2} />
+                </button>
+                {mounted && isDetailsOpen && (
+                    <ParcelaDetailsModal
+                        parcelaId={parcela.id}
+                        onClose={() => setIsDetailsOpen(false)}
+                    />
+                )}
+            </div>
         );
     }
 
     return (
         <>
             {/* Action buttons — strictly side-by-side minimalist style */}
-            <div className="flex flex-row items-center justify-end gap-2">
+            <div className="flex flex-row items-center justify-end gap-1.5 w-full">
                 {/* Dar Baixa */}
                 <button
                     onClick={() => setIsPaymentOpen(true)}
                     title="Registrar pagamento"
-                    className="inline-flex items-center justify-center h-7 px-3 gap-1 rounded-full bg-green-500/10 border border-green-500/20 hover:bg-green-500/20 hover:border-green-500/40 text-green-400 text-[10px] font-semibold transition-all whitespace-nowrap"
+                    className="inline-flex items-center justify-center h-6 px-2.5 gap-1 rounded-md bg-[#34C759]/10 border border-[#34C759]/10 hover:bg-[#34C759]/20 hover:border-[#34C759]/30 text-[#34C759] text-[10px] font-semibold transition-all whitespace-nowrap"
                 >
                     <Check size={11} strokeWidth={2.5} />
-                    Dar Baixa
+                    Baixa
                 </button>
 
-                {/* Dividir — hidden for sub-installments */}
-                {/* Dividir — hidden for sub-installments */}
+                {/* Info / Eye Details */}
+                <button
+                    onClick={() => setIsDetailsOpen(true)}
+                    title="Ver Ficha da Parcela"
+                    className="inline-flex items-center justify-center h-6 px-2.5 rounded-md bg-blue-500/10 border border-blue-500/10 hover:bg-blue-500/20 hover:border-blue-500/30 text-blue-400 transition-all"
+                >
+                    <Eye size={11} strokeWidth={2} />
+                </button>
+
+                {/* Dividir */}
                 {showSplit && (
                     <button
                         onClick={() => setIsSplitOpen(true)}
                         title="Desmembrar parcela"
-                        className="inline-flex items-center justify-center h-7 px-2.5 rounded-full bg-blue-500/10 border border-blue-500/20 hover:bg-blue-500/20 hover:border-blue-500/40 text-blue-400 transition-all"
+                        className="inline-flex items-center justify-center h-6 px-2.5 rounded-md bg-blue-500/10 border border-blue-500/10 hover:bg-blue-500/20 hover:border-blue-500/30 text-blue-400 transition-all"
                     >
                         <Split size={11} strokeWidth={2.5} />
                     </button>
                 )}
 
-                {/* Edit — only for unpaid (no pagamento record) */}
+                {/* Edit */}
                 {showEditDelete && (
                     <button
                         onClick={() => setIsEditOpen(true)}
                         title="Editar parcela"
-                        className="inline-flex items-center justify-center h-7 px-2.5 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 text-gray-300 transition-all"
+                        className="inline-flex items-center justify-center h-6 px-2.5 rounded-md bg-white/5 border border-white/5 hover:bg-white/10 hover:border-white/10 text-gray-300 transition-all"
                     >
                         <Pencil size={11} strokeWidth={2.5} />
                     </button>
                 )}
 
-                {/* Delete — only for unpaid */}
+                {/* Delete */}
                 {showEditDelete && (
                     <button
                         onClick={() => setIsDeleteOpen(true)}
                         title="Excluir parcela"
-                        className="inline-flex items-center justify-center h-7 px-2.5 rounded-full bg-red-500/10 border border-red-500/20 hover:bg-red-500/20 hover:border-red-500/40 text-red-400 transition-all"
+                        className="inline-flex items-center justify-center h-6 px-2.5 rounded-md bg-[#FF3B30]/10 border border-[#FF3B30]/10 hover:bg-[#FF3B30]/20 hover:border-[#FF3B30]/30 text-[#FF3B30] transition-all"
                     >
                         <Trash2 size={11} strokeWidth={2.5} />
                     </button>
@@ -632,6 +952,12 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
             </div>
 
             {/* Modals — portaled to document.body via Modal component */}
+            {mounted && isDetailsOpen && (
+                <ParcelaDetailsModal
+                    parcelaId={parcela.id}
+                    onClose={() => setIsDetailsOpen(false)}
+                />
+            )}
             {mounted && isPaymentOpen && (
                 <PaymentModal
                     parcela={parcela}
