@@ -2,11 +2,14 @@ import Link from "next/link";
 import {
     ChevronLeft,
     ChevronRight,
+    ChevronUp,
+    ChevronDown,
+    ChevronsUpDown,
     TrendingUp,
     Landmark,
     Wallet,
     Users,
-    ArrowDownCircle,
+    AlertTriangle,
     ExternalLink
 } from "lucide-react";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -61,7 +64,7 @@ interface RawParcela {
 }
 
 // ─── Classified row ───────────────────────────────────────────────────────────
-type RowStatus = "PAGO" | "INADIMPLENTE" | "PERDA" | "EM_INADIMPLENCIA" | "ATRASADO" | "VENCE_HOJE" | "A_RECEBER";
+type RowStatus = "PAGO" | "INADIMPLENTE" | "PERDA" | "EM_INADIMPLENCIA" | "EM_PERDA" | "ATRASADO" | "VENCE_HOJE" | "VENCE_EM_BREVE" | "A_RECEBER";
 
 interface Row extends RawParcela {
     rowStatus: RowStatus;
@@ -70,88 +73,103 @@ interface Row extends RawParcela {
     pagamento: RawPagamento | null;
 }
 
-// ─── Status Pill — Strict Traffic-Light System ───────────────────────────────
-function StatusPill({ row }: { row: Row }) {
-    // Each status has a distinct, unambiguous color
+// ─── Design System: UI Components ─────────────────────────────────────────────
+
+function StatusPill({ status, daysLateVal }: { status: RowStatus, daysLateVal: number }) {
     const map: Record<RowStatus, string> = {
-        PAGO:            "text-[#34C759]  bg-[#34C759]/10",
-        A_RECEBER:       "text-gray-400   bg-white/5",
-        VENCE_HOJE:      "text-[#028aa4]  bg-[#028aa4]/10",
-        ATRASADO:        "text-[#FF9500]  bg-[#FF9500]/10",
-        EM_INADIMPLENCIA:"text-[#FF453A]  bg-[#FF453A]/10",
-        INADIMPLENTE:    "text-[#FF453A]  bg-[#FF453A]/10",
-        PERDA:           "text-[#FF3B30]  bg-[#FF3B30]/20  border border-[#FF3B30]/30",
+        PAGO: "text-[#34C759] bg-[#34C759]/10 border-[#34C759]/20",
+        INADIMPLENTE: "text-[#FF453A] bg-[#FF453A]/10 border-[#FF453A]/20",
+        EM_INADIMPLENCIA: "text-[#fa1e46] bg-[#FF453A]/10 border-[#FF453A]/20",
+        PERDA: "text-[#FF3B30] bg-[#FF3B30]/10 border-[#FF3B30]/20",
+        EM_PERDA: "text-[#FF3B30] bg-[#FF3B30]/10 border-[#FF3B30]/20",
+        ATRASADO: "text-[#FF9500] bg-[#FF9500]/10 border-[#FF9500]/20",
+        VENCE_HOJE: "text-[#FFD60A] bg-[#FFD60A]/10 border-[#FFD60A]/20",
+        VENCE_EM_BREVE: "text-[#FFD60A] bg-[#FFD60A]/10 border-[#FFD60A]/20",
+        A_RECEBER: "text-gray-300 bg-white/5 border-white/10",
     };
     const labels: Record<RowStatus, string> = {
-        PAGO:            "Pago",
-        A_RECEBER:       "A Receber",
-        VENCE_HOJE:      "Vence Hoje",
-        ATRASADO:        "Atrasado",
-        EM_INADIMPLENCIA:"Inadimplência",
-        INADIMPLENTE:    "Inadimplente",
-        PERDA:           "Perda",
+        PAGO: "Pago",
+        INADIMPLENTE: "Inadimplente",
+        EM_INADIMPLENCIA: "Em Inadimplência",
+        PERDA: "Perda de Fatura",
+        EM_PERDA: "Em Perda",
+        ATRASADO: "Atrasado",
+        VENCE_HOJE: "Vence Hoje",
+        VENCE_EM_BREVE: "Vence em Breve",
+        A_RECEBER: "A Receber",
     };
-    // Show days overdue for ATRASADO
-    const suffix = row.rowStatus === "ATRASADO" && row.daysLateVal > 0
-        ? ` +${row.daysLateVal}d`
-        : "";
+    
+    if (status === "ATRASADO" && daysLateVal > 0) {
+        return (
+             <div className="flex items-center gap-2">
+                 <span className={`inline-flex items-center rounded-md px-2.5 py-1 text-[10px] font-bold tracking-widest uppercase border ${map[status]}`}>
+                     {labels[status]}
+                 </span>
+                 <span className="text-[9px] text-gray-500 font-medium whitespace-nowrap">
+                     {daysLateVal} d
+                 </span>
+             </div>
+        );
+    }
+    
     return (
-        <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[9px] font-semibold whitespace-nowrap ${map[row.rowStatus]}`}>
-            {labels[row.rowStatus]}{suffix}
+        <span className={`inline-flex items-center rounded-md px-2.5 py-1 text-[10px] font-bold tracking-widest uppercase border ${map[status]}`}>
+            {labels[status]}
         </span>
     );
 }
 
-function ClienteBadge({ status }: { status: string | null | undefined }) {
-    if (!status) return <span className="text-gray-600">—</span>;
-    const colorMap: Record<string, string> = {
-        ATIVO:          "bg-[#34C759]/10 text-[#34C759]",
-        INADIMPLENTE:   "bg-[#FF453A]/10 text-[#FF453A]",
-        EM_INADIMPLENCIA:"bg-[#FF453A]/10 text-[#FF453A]",
-    };
-    const cls = colorMap[status] ?? "bg-white/5 text-gray-400";
+function FaturaDot({ rowStatus }: { rowStatus: RowStatus }) {
+    let color = "bg-gray-400"; 
+    
+    if (rowStatus === "PAGO") color = "bg-[#34C759]";
+    else if (rowStatus === "INADIMPLENTE" || rowStatus === "EM_INADIMPLENCIA") color = "bg-[#fa1e46]"; 
+    else if (rowStatus === "PERDA" || rowStatus === "EM_PERDA") color = "bg-[#FF3B30]"; 
+    else if (rowStatus === "ATRASADO") color = "bg-[#FF9500]"; 
+    else if (rowStatus === "VENCE_HOJE" || rowStatus === "VENCE_EM_BREVE") color = "bg-[#FFD60A]"; 
+    
     return (
-        <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[9px] font-semibold whitespace-nowrap ${cls}`}>
-            {status}
-        </span>
+        <div 
+            className={`w-2.5 h-2.5 rounded-full shrink-0 mx-auto ${color}`} 
+            title={`Status da Fatura: ${rowStatus}`} 
+        />
     );
 }
 
-// ─── KPI Card — Apple/Linear aesthetic ───────────────────────────────────────
 function KpiCard({ icon, label, value, color = "orange" }: { icon: React.ReactNode; label: string; value: string; color?: "orange" | "green" | "red" | "blue" | "gray"; }) {
-    const textColors = {
-        orange: "text-[#ffa300]",
-        green:  "text-[#34C759]",
-        red:    "text-[#FF453A]",
-        blue:   "text-[#028aa4]",
-        gray:   "text-gray-500",
-    };
+    const theme = {
+        orange: { text: "text-[#ffa300]", border: "border-white/5 hover:border-[#ffa300]/30" },
+        green: { text: "text-[#34C759]", border: "border-white/5 hover:border-[#34C759]/30" },
+        red: { text: "text-[#FF453A]", border: "border-white/5 hover:border-[#FF453A]/30" },
+        blue: { text: "text-[#028aa4]", border: "border-white/5 hover:border-[#028aa4]/30" },
+        gray: { text: "text-gray-400", border: "border-white/5 hover:border-gray-500/30" },
+    }[color];
+
     return (
-        <div className="flex flex-col gap-1 rounded-2xl bg-[#0A0A0A] border border-white/[0.06] px-5 py-4 flex-1 min-w-[140px] hover:bg-[#111] transition-colors">
-            <div className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest ${textColors[color]}`}>
+        <div className={`flex flex-col justify-between gap-3 rounded-2xl bg-[#0A0A0A] border ${theme.border} p-5 transition-all shadow-2xl`}>
+            <div className={`flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest ${theme.text}`}>
                 {icon}
                 {label}
             </div>
-            <span className="text-xl font-bold leading-none text-white mt-2 font-mono tabular-nums">{value}</span>
+            <span className="text-2xl font-black text-white leading-none tracking-tight">{value}</span>
         </div>
     );
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
-export default async function OperacoesPage({ searchParams }: { searchParams: Promise<{ month?: string; status?: string; agencia?: string; categoria?: string; search?: string; }>; }) {
+export default async function OperacoesPage({ searchParams }: { searchParams: Promise<{ month?: string; status?: string; agencia?: string; categoria?: string; search?: string; plataforma?: string; sort?: string; order?: string; }>; }) {
     const p = await searchParams;
     const currentMonth = p.month ?? new Date().toISOString().slice(0, 7);
     const statusFilter = (p.status ?? "").toLowerCase();
     const agenciaFilter = p.agencia ?? "";
     const categoriaFilter = p.categoria ?? "";
     const searchFilter = (p.search ?? "").toLowerCase().trim();
+    const plataformaFilter = (p.plataforma ?? "").toLowerCase();
+    const sortCol = p.sort ?? "";
+    const sortOrder = p.order ?? "asc";
     const todayStr = toDateStr(new Date());
 
     const [y, mo] = currentMonth.split("-").map(Number);
-    const monthLabel = new Date(currentMonth + "-01T12:00:00").toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
-    const monthLabelCap = monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
-    
-    // Config dates
     const prevDate = new Date(y, mo - 2, 1);
     const nextDate = new Date(y, mo, 1);
     const startDate = `${currentMonth}-01`;
@@ -163,14 +181,35 @@ export default async function OperacoesPage({ searchParams }: { searchParams: Pr
         if (p.status) qs.set("status", p.status);
         if (p.agencia) qs.set("agencia", p.agencia);
         if (p.categoria) qs.set("categoria", p.categoria);
+        if (p.plataforma) qs.set("plataforma", p.plataforma);
         if (p.search) qs.set("search", p.search);
+        if (p.sort) qs.set("sort", p.sort);
+        if (p.order) qs.set("order", p.order);
+        return `?${qs.toString()}`;
+    };
+
+    const buildSortUrl = (column: string) => {
+        const qs = new URLSearchParams();
+        if (p.month) qs.set("month", p.month);
+        if (p.status) qs.set("status", p.status);
+        if (p.agencia) qs.set("agencia", p.agencia);
+        if (p.categoria) qs.set("categoria", p.categoria);
+        if (p.plataforma) qs.set("plataforma", p.plataforma);
+        if (p.search) qs.set("search", p.search);
+        
+        if (sortCol === column) {
+            qs.set("sort", column);
+            qs.set("order", sortOrder === "asc" ? "desc" : "asc");
+        } else {
+            qs.set("sort", column);
+            qs.set("order", "asc");
+        }
         return `?${qs.toString()}`;
     };
     
     const prevMonthUrl = buildMonthUrl(`${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}`);
     const nextMonthUrl = buildMonthUrl(`${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, "0")}`);
 
-    // ── Enforce Database Truth for Statuses ──
     await syncFinanceStatuses(supabaseAdmin);
 
     const { data: rawData } = await supabaseAdmin
@@ -186,41 +225,62 @@ export default async function OperacoesPage({ searchParams }: { searchParams: Pr
         .order("data_vencimento", { ascending: true });
 
     const allParcelas = (rawData ?? []) as unknown as RawParcela[];
-    
+
     const classified: Row[] = allParcelas
         .filter((rowP) => !rowP.deleted_at && !(rowP.contratos as any)?.deleted_at && !(rowP.contratos as any)?.clientes?.deleted_at && !["RENOVAR CONTRATO", "FINALIZAR PROJETO", "QUEBRA DE CONTRATO", "RENOVADO"].includes(rowP.status_manual_override ?? ""))
         .map((rowP): Row => {
             const dl = daysLate(rowP.data_vencimento, todayStr);
-            const s = rowP.status_manual_override ?? "A_RECEBER";
+            const s = rowP.status_manual_override ?? "NORMAL";
             const ct = rowP.contratos as any;
             const rawAgencia = ct?.dim_agencias;
             const agenciaNome: string | null = rawAgencia ? (Array.isArray(rawAgencia) ? (rawAgencia[0]?.nome ?? null) : (rawAgencia.nome ?? null)) : null;
             const pagamentoRaw = rowP.pagamentos;
             const pagamento: RawPagamento | null = Array.isArray(pagamentoRaw) ? (pagamentoRaw[0] ?? null) : (pagamentoRaw ?? null);
 
-            let rowStatus: RowStatus = "A_RECEBER";
-            if (s === "PAGO" || s === "INADIMPLENTE RECEBIDO") rowStatus = "PAGO";
-            else if (s === "INADIMPLENTE" || s === "PERDA DE FATURAMENTO") rowStatus = "INADIMPLENTE";
-            else if (s === "EM_INADIMPLENCIA" || s === "EM_PERDA_FATURAMENTO") rowStatus = "EM_INADIMPLENCIA";
-            else if (s === "ATRASADO") rowStatus = "ATRASADO";
-            else if (s === "NORMAL" && rowP.data_vencimento === todayStr) rowStatus = "VENCE_HOJE";
+            let rowStatus = s as RowStatus;
+            if (s === "PAGO" || s === "INADIMPLENTE RECEBIDO") {
+                rowStatus = "PAGO";
+            } else if (s === "PERDA DE FATURAMENTO") {
+                rowStatus = "PERDA";
+            } else if (s === "EM_PERDA_FATURAMENTO") {
+                rowStatus = "EM_PERDA";
+            } else if (s === "INADIMPLENTE") {
+                rowStatus = "INADIMPLENTE";
+            } else if (s === "EM_INADIMPLENCIA") {
+                rowStatus = "EM_INADIMPLENCIA";
+            } else if (s === "ATRASADO") {
+                rowStatus = "ATRASADO";
+            } else if (s === "NORMAL") {
+                if (dl === 0) rowStatus = "VENCE_HOJE";
+                else if (dl >= -3 && dl < 0) rowStatus = "VENCE_EM_BREVE";
+                else rowStatus = "A_RECEBER";
+            }
 
             return { ...rowP, rowStatus, daysLateVal: Math.max(0, dl), agenciaNome, pagamento };
         });
 
     const agencias = [...new Set(classified.map(r => r.agenciaNome).filter(Boolean) as string[])].sort();
     const categorias = [...new Set(classified.map(r => r.categoria).filter(Boolean) as string[])].sort();
+    const plataformas = [...new Set(classified.map(r => (r.rowStatus === "PAGO" && r.pagamento?.plataforma) ? r.pagamento.plataforma : ((r.contratos as any)?.forma_pagamento || "—")).filter(plat => plat !== "—"))].sort();
 
     const visible = classified.filter((row) => {
         if (statusFilter) {
             if (statusFilter === "pagos" && row.rowStatus !== "PAGO") return false;
-            if (statusFilter === "a_receber" && row.rowStatus !== "A_RECEBER") return false;
+            if (statusFilter === "a_receber" && !["A_RECEBER", "VENCE_EM_BREVE", "VENCE_HOJE"].includes(row.rowStatus)) return false;
             if (statusFilter === "vence_hoje" && row.rowStatus !== "VENCE_HOJE") return false;
             if (statusFilter === "atrasados" && row.rowStatus !== "ATRASADO") return false;
-            if (statusFilter === "inadimplentes" && !["INADIMPLENTE", "PERDA", "EM_INADIMPLENCIA"].includes(row.rowStatus)) return false;
+            if (statusFilter === "inadimplentes" && !["INADIMPLENTE", "EM_INADIMPLENCIA"].includes(row.rowStatus)) return false;
+            if (statusFilter === "perda" && !["PERDA", "EM_PERDA"].includes(row.rowStatus)) return false;
         }
         if (agenciaFilter && row.agenciaNome !== agenciaFilter) return false;
         if (categoriaFilter && row.categoria !== categoriaFilter) return false;
+        
+        const rowPlat = row.rowStatus === "PAGO" && row.pagamento?.plataforma 
+            ? row.pagamento.plataforma 
+            : ((row.contratos as any)?.forma_pagamento || "—");
+            
+        if (plataformaFilter && rowPlat.toLowerCase() !== plataformaFilter) return false;
+        
         if (searchFilter) {
             const ct = row.contratos as any;
             const nome = (ct?.clientes?.nome_cliente ?? "").toLowerCase();
@@ -230,18 +290,43 @@ export default async function OperacoesPage({ searchParams }: { searchParams: Pr
         return true;
     });
 
-    const kpiCount = visible.length;
-    const kpiTotalPrevisto = visible.reduce((s, r) => s + r.valor_previsto, 0);
-    const kpiFaturadoLiquido = visible.reduce((s, r) => s + (r.pagamento?.valor_pago ?? 0), 0);
-    const kpiTaxas = visible.reduce((s, r) => s + (r.pagamento?.taxa_gateway ?? 0), 0);
-    const kpiAReceber = visible.filter(r => r.rowStatus !== "PAGO").reduce((s, r) => s + r.valor_previsto, 0);
+    // ─── Mathematical Sorting ───
+    if (sortCol) {
+        visible.sort((a, b) => {
+            let valA: string | number = "";
+            let valB: string | number = "";
 
-    const TH = "py-2.5 px-1 text-left text-[9px] font-semibold text-gray-500 uppercase tracking-widest truncate select-none";
-    const TD = "py-2.5 px-1 text-[10px] md:text-[11px] truncate whitespace-nowrap";
+            if (sortCol === "vencimento") {
+                valA = a.data_vencimento; valB = b.data_vencimento;
+            } else if (sortCol === "plataforma") {
+                valA = (a.rowStatus === "PAGO" && a.pagamento?.plataforma ? a.pagamento.plataforma : ((a.contratos as any)?.forma_pagamento || "—")) || "";
+                valB = (b.rowStatus === "PAGO" && b.pagamento?.plataforma ? b.pagamento.plataforma : ((b.contratos as any)?.forma_pagamento || "—")) || "";
+            } else if (sortCol === "status") {
+                valA = a.rowStatus; valB = b.rowStatus;
+            }
+
+            if (valA < valB) return sortOrder === "asc" ? -1 : 1;
+            if (valA > valB) return sortOrder === "asc" ? 1 : -1;
+            return 0;
+        });
+    }
+
+    const kpiCount = visible.length;
+    const kpiTotalBruto = visible.reduce((s, r) => s + (r.valor_bruto ?? r.valor_previsto), 0);
+    const kpiRecebido = visible.reduce((s, r) => s + (r.rowStatus === "PAGO" ? (r.pagamento?.valor_pago ?? 0) : 0), 0);
+    const kpiAtraso = visible.filter(r => ["ATRASADO", "INADIMPLENTE", "EM_INADIMPLENCIA", "PERDA", "EM_PERDA"].includes(r.rowStatus)).reduce((s, r) => s + (r.valor_bruto ?? r.valor_previsto), 0);
+    const kpiAReceber = visible.filter(r => ["A_RECEBER", "VENCE_EM_BREVE", "VENCE_HOJE"].includes(r.rowStatus)).reduce((s, r) => s + (r.valor_bruto ?? r.valor_previsto), 0);
+
+    const TH = "py-4 px-3 text-left text-[11px] font-bold text-gray-400 uppercase tracking-widest whitespace-nowrap select-none";
+    const TD = "py-4 px-3 align-middle";
+
+    const SortIcon = ({ column }: { column: string }) => {
+        if (sortCol !== column) return <ChevronsUpDown size={12} className="inline ml-1.5 opacity-30 group-hover:opacity-100 transition-opacity" />;
+        return sortOrder === "asc" ? <ChevronUp size={12} className="inline ml-1.5 text-orange-500" /> : <ChevronDown size={12} className="inline ml-1.5 text-orange-500" />;
+    };
 
     return (
         <div className="flex flex-col gap-6 max-w-[1600px] mx-auto pb-10">
-            {/* Breadcrumb */}
             <nav className="flex items-center gap-2 text-[10px]">
                 <Link href="/" className="text-gray-500 hover:text-white transition-colors">Dashboard</Link>
                 <span className="text-gray-700">/</span>
@@ -250,108 +335,97 @@ export default async function OperacoesPage({ searchParams }: { searchParams: Pr
                 <span className="text-[#ffa300] font-semibold">Mesa de Operações</span>
             </nav>
 
-            {/* ── Date Navigator ── */}
             <div className="flex items-center justify-between gap-4">
                 <div>
-                    <h1 className="text-2xl font-bold text-white tracking-tight leading-none mb-1">Mesa de Operações</h1>
-                    <p className="text-[10px] text-gray-500 font-medium">Controle financeiro e recebíveis</p>
+                    <h1 className="text-2xl font-black text-white tracking-tight leading-none mb-1">Mesa de Operações</h1>
+                    <p className="text-xs text-gray-500 font-medium">Controle e auditoria de faturas</p>
                 </div>
                 
                 <div className="flex items-center gap-3">
-                    {/* Minimalist Tabs */}
-                    <div className="flex bg-[#111] border border-white/5 rounded-full p-1 h-9">
-                        <span className="px-4 py-1 text-[11px] font-semibold rounded-full bg-white/10 text-white shadow-sm flex items-center justify-center cursor-default">
-                            Mensal
-                        </span>
-                        <Link 
-                            href={`/contas-a-receber/previsao?period=annual&date=${y}-01`} 
-                            className="px-4 py-1 text-[11px] font-medium rounded-full text-gray-500 hover:text-white transition-all flex items-center justify-center"
-                        >
-                            Anual
-                        </Link>
+                    <div className="flex bg-[#111] border border-[#222] rounded-full p-1 h-9">
+                        <span className="px-4 py-1 text-[11px] font-semibold rounded-full bg-white/10 text-white shadow-sm flex items-center justify-center cursor-default">Mensal</span>
+                        <Link href={`/contas-a-receber/previsao?period=annual&date=${y}-01`} className="px-4 py-1 text-[11px] font-medium rounded-full text-gray-500 hover:text-white transition-all flex items-center justify-center">Anual</Link>
                     </div>
 
-                    {/* Compact Date Navigator */}
-                    <div className="flex items-center gap-1 bg-[#1C1C1E] border border-white/5 rounded-xl p-1 shadow-sm h-9">
-                        <Link
-                            href={prevMonthUrl}
-                            className="w-6 h-full flex items-center justify-center rounded-md text-gray-500 hover:bg-white/5 hover:text-white transition-all"
-                            aria-label="Mês anterior"
-                        >
-                            <ChevronLeft size={14} />
-                        </Link>
-
+                    <div className="flex items-center gap-1 bg-[#111] border border-[#222] rounded-xl p-1 shadow-sm h-9">
+                        <Link href={prevMonthUrl} className="w-6 h-full flex items-center justify-center rounded-md text-gray-500 hover:bg-white/10 hover:text-white transition-all"><ChevronLeft size={14} /></Link>
                         <form method="GET" className="flex items-center gap-1.5 h-full">
-                        {p.status && <input type="hidden" name="status" value={p.status} />}
-                        {p.agencia && <input type="hidden" name="agencia" value={p.agencia} />}
-                        {p.categoria && <input type="hidden" name="categoria" value={p.categoria} />}
-                        {p.search && <input type="hidden" name="search" value={p.search} />}
-                        <input 
-                            type="month" 
-                            name="month" 
-                            defaultValue={currentMonth} 
-                            className="bg-black border border-white/10 rounded-md px-2 py-1.5 text-[11px] text-white font-mono focus:outline-none focus:border-[#ffa300] [color-scheme:dark]" 
-                        />
-                        <button type="submit" className="bg-[#ffa300] text-black px-3 py-1.5 rounded-md text-[11px] font-bold hover:bg-orange-400 transition-colors">
-                            Ir
-                        </button>
-                    </form>
-
-                        <Link
-                            href={nextMonthUrl}
-                            className="w-6 h-full flex items-center justify-center rounded-md text-gray-500 hover:bg-white/5 hover:text-white transition-all"
-                            aria-label="Próximo mês"
-                        >
-                            <ChevronRight size={14} />
-                        </Link>
+                            {p.status && <input type="hidden" name="status" value={p.status} />}
+                            {p.agencia && <input type="hidden" name="agencia" value={p.agencia} />}
+                            {p.categoria && <input type="hidden" name="categoria" value={p.categoria} />}
+                            {p.search && <input type="hidden" name="search" value={p.search} />}
+                            {p.plataforma && <input type="hidden" name="plataforma" value={p.plataforma} />}
+                            {p.sort && <input type="hidden" name="sort" value={p.sort} />}
+                            {p.order && <input type="hidden" name="order" value={p.order} />}
+                            <input type="month" name="month" defaultValue={currentMonth} className="bg-black border border-[#333] rounded-md px-2 py-1 text-[11px] font-bold text-white font-mono focus:outline-none focus:border-[#ffa300] [color-scheme:dark]" />
+                            <button type="submit" className="bg-[#ffa300] text-black px-3 py-1 rounded-md text-[11px] font-bold hover:bg-orange-400 transition-colors h-full">Ir</button>
+                        </form>
+                        <Link href={nextMonthUrl} className="w-6 h-full flex items-center justify-center rounded-md text-gray-500 hover:bg-white/10 hover:text-white transition-all"><ChevronRight size={14} /></Link>
                     </div>
                 </div>
             </div>
 
-            {/* KPIs */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                <KpiCard icon={<Users size={12} />} label="Contas" value={`${kpiCount}`} color="gray" />
-                <KpiCard icon={<TrendingUp size={12} />} label="Previsto" value={brl(kpiTotalPrevisto)} color="orange" />
-                <KpiCard icon={<Landmark size={12} />} label="Recebido" value={brl(kpiFaturadoLiquido)} color="green" />
-                <KpiCard icon={<ArrowDownCircle size={12} />} label="Taxas" value={brl(kpiTaxas)} color="red" />
-                <KpiCard icon={<Wallet size={12} />} label="A Receber" value={brl(kpiAReceber)} color="blue" />
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                <KpiCard icon={<Users size={14} />} label="Total no Filtro" value={`${kpiCount}`} color="gray" />
+                <KpiCard icon={<Landmark size={14} />} label="Bruto Estimado" value={brl(kpiTotalBruto)} color="blue" />
+                <KpiCard icon={<TrendingUp size={14} />} label="Já Recebido" value={brl(kpiRecebido)} color="green" />
+                <KpiCard icon={<Wallet size={14} />} label="A Receber (Prazo)" value={brl(kpiAReceber)} color="orange" />
+                <KpiCard icon={<AlertTriangle size={14} />} label="Risco / Atraso" value={brl(kpiAtraso)} color="red" />
             </div>
 
-            {/* Tabela Principal */}
-            <div className="rounded-2xl bg-[#0A0A0A] border border-[#222] shadow-2xl overflow-hidden mt-2 flex flex-col">
+            <div className="rounded-3xl bg-[#0A0A0A] border border-[#222] shadow-2xl overflow-hidden mt-2 flex flex-col">
                 <OperacoesToolbar
                     agencias={agencias}
                     categorias={categorias}
+                    plataformas={plataformas}
                     status={statusFilter}
                     agencia={agenciaFilter}
                     categoria={categoriaFilter}
+                    plataforma={plataformaFilter}
                     search={searchFilter}
                 />
                 
                 {visible.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-24 gap-3">
+                    <div className="flex flex-col items-center justify-center py-24 gap-3 bg-[#0A0A0A]">
                         <span className="text-4xl opacity-30">📭</span>
-                        <span className="text-sm font-medium text-gray-500">Nenhuma parcela no filtro</span>
+                        <span className="text-sm font-medium text-gray-500">Nenhuma fatura encontrada neste filtro.</span>
                     </div>
                 ) : (
-                    <div className="w-full">
-                        <table className="w-full table-fixed text-left text-[10px] md:text-[11px]">
-                            <thead className="sticky top-0 z-10 backdrop-blur-xl">
-                                <tr className="border-b border-[#222] bg-[#0A0A0A]/95">
-                                    <th className={`${TH} w-[7%] pl-4`}>Cliente</th>
-                                    <th className={`${TH} w-[9%]`}>Categoria</th>
-                                    <th className={`${TH} w-[18%]`}>Cliente / Empresa</th>
-                                    <th className={`${TH} w-[8%]`}>Agência</th>
-                                    <th className={`${TH} w-[8%]`}>Vencimento</th>
-                                    <th className={`${TH} w-[9%]`}>Status</th>
-                                    <th className={`${TH} w-[5%]`}>Parcela</th>
-                                    <th className={`${TH} w-[10%] text-right`}>Valor Bruto</th>
-                                    <th className={`${TH} w-[10%] text-right`}>Recebido</th>
-                                    <th className={`${TH} w-[6%]`}>Plataforma</th>
-                                    <th className={`${TH} w-[10%] text-right pr-4`}>Ação</th>
+                    <div className="w-full overflow-x-auto pb-4 [&::-webkit-scrollbar]:h-2.5 [&::-webkit-scrollbar-thumb]:bg-[#333] hover:[&::-webkit-scrollbar-thumb]:bg-[#444] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent">
+                        <table className="w-full table-fixed min-w-[1500px]">
+                            <thead className="sticky top-0 z-10 backdrop-blur-2xl bg-[#050505]/90">
+                                <tr className="border-b border-[#222]">
+                                    <th className={`${TH} w-[4%] pl-6 text-center`}></th>
+                                    <th className={`${TH} w-[19%]`}>Cliente / Empresa</th>
+                                    <th className={`${TH} w-[11%]`}>Contexto</th>
+                                    
+                                    <th className={`${TH} w-[10%] group cursor-pointer hover:text-white transition-colors`}>
+                                        <Link href={buildSortUrl("vencimento")} className="flex items-center" scroll={false}>
+                                            Vencimento <SortIcon column="vencimento" />
+                                        </Link>
+                                    </th>
+                                    
+                                    <th className={`${TH} w-[6%]`}>Parcela</th>
+                                    
+                                    <th className={`${TH} w-[12%] group cursor-pointer hover:text-white transition-colors`}>
+                                        <Link href={buildSortUrl("status")} className="flex items-center" scroll={false}>
+                                            Status Fatura <SortIcon column="status" />
+                                        </Link>
+                                    </th>
+
+                                    <th className={`${TH} w-[8%] text-right`}>Valor Bruto</th>
+                                    <th className={`${TH} w-[8%] text-right pr-4`}>Recebido</th>
+                                    
+                                    <th className={`${TH} w-[10%] text-center group cursor-pointer hover:text-white transition-colors`}>
+                                        <Link href={buildSortUrl("plataforma")} className="flex items-center justify-center" scroll={false}>
+                                            Plataforma <SortIcon column="plataforma" />
+                                        </Link>
+                                    </th>
+
+                                    <th className={`${TH} w-[18%] p-8`}>Ações</th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-white/5">
+                            <tbody className="divide-y divide-[#1a1a1a]">
                                 {visible.map((row) => {
                                     const ct = row.contratos as any;
                                     const cliente = ct?.clientes as RawCliente | null;
@@ -381,125 +455,89 @@ export default async function OperacoesPage({ searchParams }: { searchParams: Pr
                                         cliente_id: clienteId,
                                     };
 
+                                    const plataformaExibicao = isPago && row.pagamento?.plataforma 
+                                        ? row.pagamento.plataforma 
+                                        : (ct?.forma_pagamento || "—");
+
                                     return (
-                                        <tr
-                                            key={row.id}
-                                            className={`group transition-colors hover:bg-white/[0.025] border-b border-[#1a1a1a] last:border-0 ${
-                                                isPago ? "opacity-40 hover:opacity-60" : ""
-                                            }`}
-                                        >
-                                            {/* STATUS CLIENTE */}
-                                            <td className={`${TD} pl-4`}>
-                                                <ClienteBadge status={cliente?.status_cliente} />
-                                            </td>
+                                        <tr key={row.id} className={`group transition-colors hover:bg-[#111] ${isPago ? "opacity-50 hover:opacity-80" : ""}`}>
+                                            
+                                            <td className={`${TD} pl-6`}><FaturaDot rowStatus={row.rowStatus} /></td>
 
-                                            {/* CATEGORIA */}
-                                            <td className={`${TD} text-gray-500 font-medium`}>
-                                                {row.categoria ?? "—"}
-                                            </td>
-
-                                            {/* CLIENTE / EMPRESA */}
                                             <td className={TD}>
-                                                {clienteId ? (
-                                                    <div className="flex flex-col truncate pr-2">
-                                                        <Link
-                                                            href={`/cliente/${clienteId}`}
-                                                            className="font-semibold text-white truncate hover:text-[#ffa300] transition-colors"
-                                                        >
-                                                            {cliente?.nome_cliente ?? "—"}
+                                                <div className="flex flex-col min-w-0 gap-0.5">
+                                                    <div className="flex items-center gap-1.5">
+                                                        <Link href={clienteId ? `/cliente/${clienteId}` : "#"} className="text-sm font-bold text-white truncate hover:text-[#ffa300] transition-colors">
+                                                            {cliente?.nome_cliente ?? "Desconhecido"}
                                                         </Link>
-                                                        {(cliente?.empresa_label || linkAsana) && (
-                                                            <div className="flex items-center gap-1.5 text-[10px] text-gray-600">
-                                                                <span className="truncate">{cliente?.empresa_label}</span>
-                                                                {linkAsana && (
-                                                                    <a
-                                                                        href={linkAsana}
-                                                                        target="_blank"
-                                                                        rel="noopener noreferrer"
-                                                                        className="text-blue-500 hover:text-blue-300 shrink-0"
-                                                                        title="Abrir no Asana"
-                                                                    >
-                                                                        <ExternalLink size={9} />
-                                                                    </a>
-                                                                )}
-                                                            </div>
-                                                        )}
-                                                        {!cliente?.empresa_label && linkAsana && (
-                                                            <a
-                                                                href={linkAsana}
-                                                                target="_blank"
-                                                                rel="noopener noreferrer"
-                                                                className="inline-flex items-center gap-0.5 text-[9px] text-purple-500 hover:text-purple-300 transition-colors mt-0.5"
-                                                                title="Abrir no Asana"
-                                                            >
-                                                                <ExternalLink size={8} /> Asana
+                                                        {linkAsana && (
+                                                            <a href={linkAsana} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 shrink-0" title="Abrir no Asana">
+                                                                <ExternalLink size={12} />
                                                             </a>
                                                         )}
                                                     </div>
-                                                ) : (
-                                                    <span className="text-gray-600 truncate">Desconhecido</span>
-                                                )}
+                                                    {cliente?.empresa_label && (
+                                                        <span className="text-[11px] text-gray-500 truncate">{cliente.empresa_label}</span>
+                                                    )}
+                                                </div>
                                             </td>
 
-                                            {/* AGÊNCIA */}
-                                            <td className={`${TD} text-gray-500 truncate pr-2`}>
-                                                {row.agenciaNome ?? "—"}
-                                            </td>
-
-                                            {/* VENCIMENTO */}
-                                            <td className={`${TD} font-mono tabular-nums ${
-                                                isPago ? "text-gray-600" : "text-gray-300"
-                                            }`}>
-                                                {fmtDate(row.data_vencimento)}
-                                            </td>
-
-                                            {/* STATUS BADGE */}
                                             <td className={TD}>
-                                                <StatusPill row={row} />
+                                                <div className="flex flex-col gap-0.5">
+                                                    <span className="text-[11px] text-gray-300 font-bold uppercase tracking-wider truncate block">{row.categoria ?? "—"}</span>
+                                                    <span className="text-[10px] font-medium text-gray-500 truncate block">{row.agenciaNome ?? "—"}</span>
+                                                </div>
                                             </td>
 
-                                            {/* PARCELA FRAÇÃO */}
-                                            <td className={`${TD} font-mono tabular-nums text-gray-600`}>
-                                                {parcelaRef}
+                                            <td className={TD}>
+                                                <span className={`text-xs font-mono font-medium ${isPago ? "text-gray-500" : "text-gray-200"}`}>
+                                                    {fmtDate(row.data_vencimento)}
+                                                </span>
                                             </td>
 
-                                            {/* VALOR BRUTO */}
-                                            <td className={`${TD} text-right font-mono tabular-nums font-medium text-white`}>
-                                                {brl(row.valor_bruto ?? row.valor_previsto)}
+                                            <td className={TD}>
+                                                <span className="text-[11px] text-gray-500 font-mono font-bold tracking-wider">
+                                                    {parcelaRef}
+                                                </span>
                                             </td>
 
-                                            {/* VALOR RECEBIDO */}
-                                            <td className={`${TD} text-right font-mono tabular-nums font-medium ${
-                                                isPago ? "text-[#34C759]" : "text-gray-700"
-                                            }`}>
-                                                {isPago ? brl(row.pagamento?.valor_pago ?? 0) : "—"}
+                                            <td className={TD}>
+                                                <StatusPill status={row.rowStatus} daysLateVal={row.daysLateVal} />
                                             </td>
 
-                                            {/* PLATAFORMA — shows actual payment platform or dash */}
-                                            <td className={`${TD} text-[9px] uppercase tracking-wider truncate ${
-                                                isPago && row.pagamento?.plataforma ? "text-gray-400" : "text-gray-700"
-                                            }`}>
-                                                {isPago ? (row.pagamento?.plataforma ?? "—") : "—"}
+                                            <td className={`${TD} text-right`}>
+                                                <span className="text-sm font-mono font-bold text-white">{brl(row.valor_bruto ?? row.valor_previsto)}</span>
                                             </td>
 
-                                            {/* AÇÃO */}
-                                            <td className={`${TD} text-right pr-4 overflow-visible`}>
+                                            <td className={`${TD} text-right pr-4`}>
+                                                <span className={`text-sm font-mono font-bold ${isPago ? "text-[#34C759]" : "text-gray-600"}`}>
+                                                    {isPago ? brl(row.pagamento?.valor_pago || 0) : "—"}
+                                                </span>
+                                            </td>
+
+                                            <td className={`${TD} text-center`}>
+                                                <span className={`text-[9px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-lg inline-block whitespace-nowrap ${isPago ? "text-gray-400 bg-white/[0.05] border border-white/10" : "text-gray-500 bg-white/[0.02] border border-white/5"}`}>
+                                                    {plataformaExibicao}
+                                                </span>
+                                            </td>
+
+                                            <td className={`${TD} text-right pr-6`}>
                                                 <ParcelaActions parcela={parcelaData} />
                                             </td>
                                         </tr>
                                     );
                                 })}
                             </tbody>
-                            <tfoot>
-                                <tr className="border-t border-[#222] bg-[#050505]">
-                                    <td colSpan={7} className="pl-4 py-3 text-[10px] text-gray-600 uppercase tracking-widest font-bold">
-                                        Total do filtro &middot; {visible.length} parcelas
+                            <tfoot className="bg-[#050505]">
+                                <tr className="border-t border-[#222]">
+                                    <td colSpan={6} className="pl-6 py-5 text-[11px] text-gray-500 uppercase tracking-widest font-bold">
+                                        Totais da Visualização ({visible.length})
                                     </td>
-                                    <td className="px-1 py-3 text-right font-mono tabular-nums font-bold text-white text-[11px]">
-                                        {brl(kpiTotalPrevisto)}
+                                    <td className="px-3 py-5 text-right font-mono font-bold text-white text-sm">
+                                        {brl(kpiTotalBruto)}
                                     </td>
-                                    <td className="px-1 py-3 text-right font-mono tabular-nums font-bold text-[#34C759] text-[11px]">
-                                        {kpiFaturadoLiquido > 0 ? brl(kpiFaturadoLiquido) : "—"}
+                                    <td className="px-4 py-5 text-right font-mono font-bold text-[#34C759] text-sm">
+                                        {kpiRecebido > 0 ? brl(kpiRecebido) : "—"}
                                     </td>
                                     <td colSpan={2} />
                                 </tr>

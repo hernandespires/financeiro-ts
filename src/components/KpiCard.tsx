@@ -25,38 +25,38 @@ const themeConfig: Record<
 > = {
     green: {
         icon: <CheckCircle size={20} strokeWidth={1.8} />,
-        valueClass: "text-green-400",
-        borderActive: "border-green-500/60",
-        glowClass: "shadow-[0_0_18px_rgba(34,197,94,0.18)]",
-        iconBg: "bg-green-500/10 text-green-400",
+        valueClass: "text-[#34C759]",
+        borderActive: "border-[#34C759]/50",
+        glowClass: "shadow-[0_0_20px_rgba(52,199,89,0.15)]",
+        iconBg: "bg-[#34C759]/10 text-[#34C759]",
     },
     orange: {
         icon: <Clock size={20} strokeWidth={1.8} />,
-        valueClass: "text-orange-400",
-        borderActive: "border-orange-500/60",
-        glowClass: "shadow-[0_0_18px_rgba(249,115,22,0.18)]",
-        iconBg: "bg-orange-500/10 text-orange-400",
+        valueClass: "text-[#FF9500]",
+        borderActive: "border-[#FF9500]/50",
+        glowClass: "shadow-[0_0_20px_rgba(255,149,0,0.15)]",
+        iconBg: "bg-[#FF9500]/10 text-[#FF9500]",
     },
     red: {
         icon: <AlertCircle size={20} strokeWidth={1.8} />,
-        valueClass: "text-red-400",
-        borderActive: "border-red-500/60",
-        glowClass: "shadow-[0_0_18px_rgba(239,68,68,0.18)]",
-        iconBg: "bg-red-500/10 text-red-400",
+        valueClass: "text-[#FF453A]",
+        borderActive: "border-[#FF453A]/50",
+        glowClass: "shadow-[0_0_20px_rgba(255,69,58,0.15)]",
+        iconBg: "bg-[#FF453A]/10 text-[#FF453A]",
     },
     darkRed: {
         icon: <ShieldAlert size={20} strokeWidth={1.8} />,
-        valueClass: "text-red-600",
-        borderActive: "border-red-700/60",
-        glowClass: "shadow-[0_0_18px_rgba(185,28,28,0.25)]",
-        iconBg: "bg-red-900/30 text-red-600",
+        valueClass: "text-[#FF3B30]",
+        borderActive: "border-[#FF3B30]/50",
+        glowClass: "shadow-[0_0_20px_rgba(255,59,48,0.18)]",
+        iconBg: "bg-[#FF3B30]/10 text-[#FF3B30]",
     },
     gray: {
         icon: <CheckCircle size={20} strokeWidth={1.8} />,
         valueClass: "text-gray-400",
-        borderActive: "border-gray-500/60",
-        glowClass: "shadow-[0_0_18px_rgba(156,163,175,0.12)]",
-        iconBg: "bg-gray-500/10 text-gray-400",
+        borderActive: "border-gray-500/50",
+        glowClass: "shadow-[0_0_20px_rgba(156,163,175,0.10)]",
+        iconBg: "bg-white/5 text-gray-400",
     },
 };
 
@@ -75,11 +75,11 @@ export default function KpiCard({
             onClick={onClick}
             className={[
                 "w-full text-left flex flex-col gap-4 rounded-2xl p-6 transition-all duration-200",
-                "bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl",
-                "hover:scale-[1.02] hover:bg-white/[0.04] cursor-pointer",
+                "bg-[#0A0A0A] border border-white/[0.06]",
+                "hover:scale-[1.01] hover:bg-[#111111] cursor-pointer",
                 isActive
                     ? `${theme.borderActive} ${theme.glowClass}`
-                    : "border-white/10 hover:border-white/20",
+                    : "hover:border-white/[0.12]",
             ].join(" ")}
         >
             {/* Top row: icon + title */}

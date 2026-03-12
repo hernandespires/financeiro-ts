@@ -56,7 +56,7 @@ export default function HomePage() {
         <div className="grid grid-cols-3 gap-4">
 
           {/* Saldo em conta */}
-          <div className="flex flex-col justify-between rounded-2xl bg-orange-500 p-5 min-h-[120px]">
+          <div className="flex flex-col justify-between rounded-2xl bg-[#FFA300] p-5 min-h-[120px]">
             <span className="text-xs font-semibold text-black/70 uppercase tracking-wide">
               Saldo em conta
             </span>
@@ -72,7 +72,7 @@ export default function HomePage() {
           </div>
 
           {/* A receber */}
-          <div className="flex flex-col justify-between rounded-2xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl p-5 min-h-[120px]">
+          <div className="flex flex-col justify-between rounded-2xl bg-[#0A0A0A] border border-white/[0.06] p-5 min-h-[120px]">
             <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
               A receber
             </span>
@@ -88,7 +88,7 @@ export default function HomePage() {
           </div>
 
           {/* A pagar */}
-          <div className="flex flex-col justify-between rounded-2xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl p-5 min-h-[120px]">
+          <div className="flex flex-col justify-between rounded-2xl bg-[#0A0A0A] border border-white/[0.06] p-5 min-h-[120px]">
             <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
               A pagar
             </span>
@@ -109,7 +109,7 @@ export default function HomePage() {
 
           <Link
             href="/contas-a-receber"
-            className="flex flex-col items-center justify-center gap-3 rounded-2xl bg-orange-500 hover:bg-orange-400 active:bg-orange-600 transition-colors p-5 min-h-[120px] cursor-pointer"
+            className="flex flex-col items-center justify-center gap-3 rounded-2xl bg-[#FFA300] hover:bg-[#e6930d] active:bg-[#cc8200] transition-colors p-5 min-h-[120px] cursor-pointer"
           >
             <Wallet size={28} strokeWidth={1.8} className="text-black" />
             <span className="text-xs font-bold text-black text-center leading-tight">
@@ -119,7 +119,7 @@ export default function HomePage() {
 
           <Link
             href="/contas-a-pagar"
-            className="flex flex-col items-center justify-center gap-3 rounded-2xl bg-orange-500 hover:bg-orange-400 active:bg-orange-600 transition-colors p-5 min-h-[120px] cursor-pointer"
+            className="flex flex-col items-center justify-center gap-3 rounded-2xl bg-[#FFA300] hover:bg-[#e6930d] active:bg-[#cc8200] transition-colors p-5 min-h-[120px] cursor-pointer"
           >
             <FileText size={28} strokeWidth={1.8} className="text-black" />
             <span className="text-xs font-bold text-black text-center leading-tight">
@@ -129,7 +129,7 @@ export default function HomePage() {
 
           <Link
             href="/cartoes"
-            className="flex flex-col items-center justify-center gap-3 rounded-2xl bg-orange-500 hover:bg-orange-400 active:bg-orange-600 transition-colors p-5 min-h-[120px] cursor-pointer"
+            className="flex flex-col items-center justify-center gap-3 rounded-2xl bg-[#FFA300] hover:bg-[#e6930d] active:bg-[#cc8200] transition-colors p-5 min-h-[120px] cursor-pointer"
           >
             <CreditCard size={28} strokeWidth={1.8} className="text-black" />
             <span className="text-xs font-bold text-black text-center leading-tight">
@@ -145,8 +145,8 @@ export default function HomePage() {
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_420px] gap-6">
 
         {/* LEFT — Bar chart */}
-        <div className="flex flex-col rounded-2xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl p-6">
-          <h2 className="text-base font-bold text-orange-500 mb-6">
+        <div className="flex flex-col rounded-2xl bg-[#0A0A0A] border border-white/[0.06] p-6">
+          <h2 className="text-base font-bold text-[#FFA300] mb-6">
             Métricas do Financeiro
           </h2>
 
@@ -155,7 +155,7 @@ export default function HomePage() {
             {chartBars.map((bar) => (
               <div key={bar.month} className="flex flex-col items-center gap-1 flex-1">
                 <div
-                  className="w-full rounded-t-lg bg-orange-500 hover:bg-orange-400 transition-all duration-300"
+                  className="w-full rounded-t-lg bg-[#FFA300] hover:bg-[#e6930d] transition-all duration-300"
                   style={{ height: `${bar.h}%`, minHeight: "16px" }}
                 />
                 <span className="text-[10px] text-gray-500 font-medium">
@@ -167,15 +167,15 @@ export default function HomePage() {
 
           {/* Bottom button */}
           <div className="mt-6 flex justify-center">
-            <button className="text-xs text-gray-400 hover:text-orange-500 transition-colors flex items-center gap-1 underline-offset-4 hover:underline">
+            <button className="text-xs text-gray-400 hover:text-[#FFA300] transition-colors flex items-center gap-1 underline-offset-4 hover:underline">
               ↓ Ver todas as métricas
             </button>
           </div>
         </div>
 
         {/* RIGHT — Transactions */}
-        <div className="flex flex-col rounded-2xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl p-6">
-          <h2 className="text-base font-bold text-orange-500 mb-5">
+        <div className="flex flex-col rounded-2xl bg-[#0A0A0A] border border-white/[0.06] p-6">
+          <h2 className="text-base font-bold text-[#FFA300] mb-5">
             Últimas transações
           </h2>
 
@@ -186,8 +186,8 @@ export default function HomePage() {
                 className="flex items-center gap-3 pb-4 border-b border-white/5 last:border-0 last:pb-0"
               >
                 {/* Avatar */}
-                <div className="w-9 h-9 rounded-full bg-orange-500/20 border border-orange-500/40 flex items-center justify-center shrink-0">
-                  <span className="text-xs font-bold text-orange-400">C</span>
+                <div className="w-9 h-9 rounded-full bg-[#FFA300]/20 border border-[#FFA300]/40 flex items-center justify-center shrink-0">
+                  <span className="text-xs font-bold text-[#FFA300]">C</span>
                 </div>
 
                 {/* Text */}
@@ -195,7 +195,7 @@ export default function HomePage() {
                   <p className="text-xs text-white leading-snug">
                     <span className="font-semibold">Colaborador</span> realizou
                     um{" "}
-                    <span className="text-orange-400 font-semibold">
+                    <span className="text-[#FFA300] font-semibold">
                       pagamento
                     </span>
                   </p>
@@ -205,7 +205,7 @@ export default function HomePage() {
                 {/* Link */}
                 <Link
                   href="#"
-                  className="text-xs text-orange-500 hover:text-orange-400 font-semibold shrink-0 flex items-center gap-0.5 transition-colors"
+                  className="text-xs text-[#FFA300] hover:text-[#e6930d] font-semibold shrink-0 flex items-center gap-0.5 transition-colors"
                 >
                   Ver <ArrowRight size={12} />
                 </Link>
@@ -215,7 +215,7 @@ export default function HomePage() {
 
           {/* Bottom button */}
           <div className="mt-5 flex justify-center">
-            <button className="text-xs text-gray-400 hover:text-orange-500 transition-colors flex items-center gap-1 underline-offset-4 hover:underline">
+            <button className="text-xs text-gray-400 hover:text-[#FFA300] transition-colors flex items-center gap-1 underline-offset-4 hover:underline">
               ↓ Ver todas as transações
             </button>
           </div>
@@ -229,10 +229,10 @@ export default function HomePage() {
         {shortcuts.map(({ label, icon: Icon }) => (
           <button
             key={label}
-            className="flex items-center gap-4 rounded-2xl bg-white/[0.02] backdrop-blur-xl border border-white/15 shadow-2xl hover:border-orange-500 p-5 transition-all duration-200 group text-left"
+            className="flex items-center gap-4 rounded-2xl bg-[#0A0A0A] border border-white/[0.06] hover:border-[#FFA300]/40 p-5 transition-all duration-200 group text-left"
           >
-            <div className="w-10 h-10 rounded-xl bg-orange-500/15 flex items-center justify-center shrink-0 group-hover:bg-orange-500/25 transition-colors">
-              <Icon size={20} className="text-orange-500" strokeWidth={1.8} />
+            <div className="w-10 h-10 rounded-xl bg-[#FFA300]/10 flex items-center justify-center shrink-0 group-hover:bg-[#FFA300]/20 transition-colors">
+              <Icon size={20} className="text-[#FFA300]" strokeWidth={1.8} />
             </div>
             <span className="text-sm font-semibold text-white/80 group-hover:text-white transition-colors leading-tight">
               {label}

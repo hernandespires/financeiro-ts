@@ -90,11 +90,11 @@ function PaymentModal({
     useEffect(() => {
         setValorPlataforma(expectedBruto.toFixed(2));
     }, [expectedBruto]);
-    
+
     // Drag & Drop state
     const [file, setFile] = useState<File | null>(null);
     const [isDragging, setIsDragging] = useState(false);
-    
+
     const [isPending, startTransition] = useTransition();
     const [isUploading, setIsUploading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -115,7 +115,7 @@ function PaymentModal({
     function handleSalvar() {
         setError(null);
         if (numPlataforma <= 0) { setError('Informe o valor recebido.'); return; }
-        
+
         startTransition(async () => {
             setIsUploading(true);
             let anexoUrl: string | undefined = undefined;
@@ -129,7 +129,7 @@ function PaymentModal({
                     );
                     const fileExt = file.name.split('.').pop();
                     const fileName = `${parcela.id}_${Date.now()}.${fileExt}`;
-                    
+
                     const { data: uploadData, error: uploadError } = await supabase.storage
                         .from('comprovantes')
                         .upload(fileName, file, { upsert: true });
@@ -157,18 +157,18 @@ function PaymentModal({
 
             const res = await registrarPagamentoCompleto(
                 parcela.id,
-                numPlataforma, 
-                taxaPlataforma, 
-                impostoRetido, 
+                numPlataforma,
+                taxaPlataforma,
+                impostoRetido,
                 valorLiquidoReal,
-                cobrarJuros ? jurosCalculado : 0, 
+                cobrarJuros ? jurosCalculado : 0,
                 dataPagamento,
                 plataforma,
                 observacao || undefined,
                 anexoUrl,
                 cobrarJuros ? expectedBruto : undefined
             );
-            
+
             setIsUploading(false);
             if (res.ok) { onSuccess(); onClose(); }
             else setError(res.error ?? 'Erro desconhecido.');
@@ -209,8 +209,8 @@ function PaymentModal({
                             </span>
                         </div>
                         <label className="flex items-center gap-2 cursor-pointer mt-1">
-                            <input 
-                                type="checkbox" 
+                            <input
+                                type="checkbox"
                                 checked={cobrarJuros}
                                 onChange={(e) => setCobrarJuros(e.target.checked)}
                                 className="w-4 h-4 rounded border-white/20 bg-black/50 text-[#ffa300] focus:ring-[#ffa300]/30"
@@ -232,18 +232,17 @@ function PaymentModal({
                 {/* Drag and Drop Zone */}
                 <div className="flex flex-col gap-1.5">
                     <label className={labelCls}>Comprovante (Opcional)</label>
-                    <div 
+                    <div
                         onDragOver={handleDragOver}
                         onDragLeave={handleDragLeave}
                         onDrop={handleDrop}
-                        className={`relative w-full h-24 border-2 border-dashed rounded-xl flex flex-col items-center justify-center transition-all ${
-                            isDragging ? "border-orange-500 bg-orange-500/10" : "border-white/10 bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.04]"
-                        }`}
+                        className={`relative w-full h-24 border-2 border-dashed rounded-xl flex flex-col items-center justify-center transition-all ${isDragging ? "border-orange-500 bg-orange-500/10" : "border-white/10 bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.04]"
+                            }`}
                     >
-                        <input 
-                            type="file" 
-                            accept="image/*,.pdf" 
-                            onChange={handleFileChange} 
+                        <input
+                            type="file"
+                            accept="image/*,.pdf"
+                            onChange={handleFileChange}
                             className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                         />
                         {file ? (
@@ -293,7 +292,7 @@ function ParcelaDetailsModal({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const [data, setData] = useState<any>(null);
     const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string|null>(null);
+    const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
         getParcelaDetails(parcelaId).then(res => {
@@ -318,7 +317,7 @@ function ParcelaDetailsModal({
     const ct = data.contratos || {};
     const cl = ct.clientes || {};
     const pag = Array.isArray(data.pagamentos) ? data.pagamentos[0] : (data.pagamentos || null);
-    
+
     const fmtNum = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
     const anexoUrl = pag?.anexo_url;
     const isPdf = anexoUrl?.toLowerCase().endsWith('.pdf');
@@ -394,7 +393,7 @@ function ParcelaDetailsModal({
     return (
         <Modal onClose={onClose} title="Ficha da Parcela" subtitle={`Raio-X Completo da Fatura #${data.numero_referencia}`} icon={<Eye size={18} className="text-blue-400" />} maxWidth="5xl">
             <div className="flex flex-col gap-4 w-full pb-2 overflow-y-auto max-h-[75vh] pr-2 custom-scrollbar">
-                
+
                 {/* 1. SECTION: DOSSIÊ DO CLIENTE */}
                 <div className="flex flex-col gap-1.5 bg-[#1C1C1E] p-4 rounded-2xl border border-white/5">
                     <SectionTitle label="1. Dossiê do Cliente" color="text-gray-400" />
@@ -404,11 +403,10 @@ function ParcelaDetailsModal({
                         <div className="flex flex-col p-3 rounded-xl bg-black border border-white/5">
                             <span className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">Status</span>
                             <div className="mt-0.5">
-                                <span className={`px-2 py-0.5 rounded text-xs font-bold tracking-wider ${
-                                    cl.status_cliente === 'INADIMPLENTE' ? 'bg-[#FF3B30]/10 text-[#FF3B30]' : 
-                                    cl.status_cliente === 'ATIVO' ? 'bg-[#34C759]/10 text-[#34C759]' : 
-                                    'bg-white/10 text-gray-300'
-                                }`}>{cl.status_cliente || 'N/A'}</span>
+                                <span className={`px-2 py-0.5 rounded text-xs font-bold tracking-wider ${cl.status_cliente === 'INADIMPLENTE' ? 'bg-[#FF3B30]/10 text-[#FF3B30]' :
+                                    cl.status_cliente === 'ATIVO' ? 'bg-[#34C759]/10 text-[#34C759]' :
+                                        'bg-white/10 text-gray-300'
+                                    }`}>{cl.status_cliente || 'N/A'}</span>
                             </div>
                         </div>
                         <InfoBox label="Categoria" value={data.categoria || 'N/A'} />
@@ -426,10 +424,9 @@ function ParcelaDetailsModal({
                         <div className="flex flex-col p-3 rounded-xl bg-black border border-white/5">
                             <span className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">Status Op.</span>
                             <div className="mt-0.5">
-                                <span className={`px-2 py-0.5 rounded text-xs font-bold tracking-wider ${
-                                    isPago ? 'bg-[#34C759]/10 text-[#34C759]' :                            isDeadDebt || parcelStatus === 'ATRASADO' ? 'bg-[#FF3B30]/10 text-[#FF3B30]' : 
+                                <span className={`px-2 py-0.5 rounded text-xs font-bold tracking-wider ${isPago ? 'bg-[#34C759]/10 text-[#34C759]' : isDeadDebt || parcelStatus === 'ATRASADO' ? 'bg-[#FF3B30]/10 text-[#FF3B30]' :
                                     'bg-[#ffa300]/10 text-[#ffa300]'
-                                }`}>{parcelStatus}</span>
+                                    }`}>{parcelStatus}</span>
                             </div>
                         </div>
                         <InfoBox label="Atraso (Dias)" value={daysLate > 0 && !isPago ? `${daysLate} dias` : '—'} highlight={daysLate > 0 && !isPago ? "text-[#FF3B30]" : "text-gray-500"} />
@@ -448,14 +445,14 @@ function ParcelaDetailsModal({
                         <SectionTitle label="3. Auditoria Financeira" color="text-[#34C759]" />
                         <span className="text-xs font-semibold text-gray-500 bg-white/5 px-2 py-0.5 rounded-lg">FLUXO DO DINHEIRO</span>
                     </div>
-                    
+
                     <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mt-1">
                         {/* 1 */} <InfoBox label="Valor Bruto" value={fmtNum(data.valor_bruto || data.valor_previsto)} highlight="text-white font-mono" />
                         {/* 2 */} <InfoBox label="Previsto Líquido" value={fmtNum(data.valor_previsto)} highlight="text-[#ffa300] font-mono font-bold" />
                         {/* 3 */} <InfoBox label="Valor Pago Plataforma" value={pag ? fmtNum(pag.valor_pago) : "—"} highlight={pag ? "text-white font-mono" : "text-gray-500 font-mono"} />
                         {/* 4 */} <InfoBox label="Plataforma Recebimento" value={pag ? pag.plataforma : "—"} />
                         {/* 5 */} <InfoBox label={`% Imposto NF (${ct.imposto_percentual || 0}%)`} value={pag ? fmtNum(pag.imposto_retido) : "—"} highlight="text-rose-400 font-mono" />
-                        
+
                         {/* 6 */} <InfoBox label="Taxa Plataforma" value={pag ? fmtNum(pag.taxa_gateway) : "—"} highlight="text-rose-400 font-mono" />
                         {/* 7 */} <InfoBox label="Juros Aplicado" value={fmtNum(jurosCalculado)} highlight={jurosCalculado > 0 ? "text-[#FF3B30] font-mono" : "text-gray-500 font-mono"} />
                         {/* 8 */} <InfoBox label="Líquido Real Na Conta" value={pag && pag.valor_liquido_real !== undefined ? fmtNum(pag.valor_liquido_real) : "—"} highlight={pag ? "text-[#34C759] font-mono font-bold" : "text-gray-500 font-mono"} />
@@ -475,20 +472,20 @@ function ParcelaDetailsModal({
                                     <Download size={10} /> Download / Abrir em nova guia
                                 </a>
                             </div>
-                            
+
                             {isPdf ? (
                                 <iframe src={`${anexoUrl}#toolbar=0`} className="w-full h-96 rounded-lg bg-white border border-white/10 mt-2" />
                             ) : (
-                                <img src={anexoUrl} alt="Comprovante" 
-                                     className="w-full max-h-[600px] object-contain rounded-lg border border-white/10 mt-2" 
-                                     onError={(e) => {
+                                <img src={anexoUrl} alt="Comprovante"
+                                    className="w-full max-h-[600px] object-contain rounded-lg border border-white/10 mt-2"
+                                    onError={(e) => {
                                         const t = e.currentTarget;
                                         t.style.display = 'none';
                                         if (!t.dataset.errorDisplayed) {
                                             t.dataset.errorDisplayed = "true";
                                             t.insertAdjacentHTML('afterend', '<p class="text-sm text-red-400 mt-2">Falha ao carregar a imagem. Verifique se o arquivo existe e o bucket é público.</p>');
                                         }
-                                     }} />
+                                    }} />
                             )}
                         </>
                     ) : (
@@ -498,7 +495,7 @@ function ParcelaDetailsModal({
                     )}
                 </div>
             </div>
-            
+
             <div className="flex justify-end pt-4 border-t border-white/5">
                 <Button variant="outline" onClick={onClose}>Fechar Ficha</Button>
             </div>
@@ -830,7 +827,7 @@ function RenovarModal({
     );
 }
 
-// ─── Main Component ──────────────────────────────────────────────────────
+// ─── Main Component ───────────────────────────────────────────────────────────
 export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
     const [isDetailsOpen, setIsDetailsOpen] = useState(false);
     const [isPaymentOpen, setIsPaymentOpen] = useState(false);
@@ -850,221 +847,104 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
     const s = parcela.status_manual_override;
     const isPago = localPago;
 
-    // ── Action availability groups ──────────────────────────────────────────
-    // FULL actions: NORMAL + ATRASADO (still collectible)
-    const isFullActionable = s === "NORMAL" || s === "ATRASADO";
-    // PARTIAL actions: in-default statuses can still receive payment
-    const isPartialActionable = s === "EM_INADIMPLENCIA" || s === "EM_PERDA_FATURAMENTO";
-    // VIEW ONLY: terminal dead-debt statuses
-    const isViewOnly = s === "INADIMPLENTE" || s === "PERDA DE FATURAMENTO";
+    const isActionable = [
+        "NORMAL",
+        "ATRASADO",
+        "INADIMPLENTE",
+        "EM_INADIMPLENCIA",
+        "PERDA DE FATURAMENTO",
+        "EM_PERDA_FATURAMENTO",
+    ].includes(s);
 
-    // Edit/Delete only available for NORMAL installments with no payment
-    const showEditDelete = s === "NORMAL" && !parcela.hasPagamento;
-    // Only root installments (not sub_indice) can be split
-    const showSplit = s === "NORMAL" && (parcela.sub_indice === null || parcela.sub_indice === undefined || parcela.sub_indice === 0);
+    const showEditDelete = isActionable && !parcela.hasPagamento;
+    const showSplit = isActionable && (!parcela.sub_indice || parcela.sub_indice === 0);
 
-    // ── Shared modals fragment ──────────────────────────────────────────────
+    // Botões compactos
+    const actionBtn = "w-8 h-8 flex items-center justify-center rounded-lg transition-all border shrink-0";
+
     const AllModals = (
         <>
-            {mounted && isDetailsOpen && (
-                <ParcelaDetailsModal parcelaId={parcela.id} onClose={() => setIsDetailsOpen(false)} />
-            )}
-            {mounted && isPaymentOpen && (
-                <PaymentModal
-                    parcela={parcela}
-                    onClose={() => setIsPaymentOpen(false)}
-                    onSuccess={() => setLocalPago(true)}
-                />
-            )}
-            {mounted && isSplitOpen && (
-                <SplitModal parcela={parcela} onClose={() => setIsSplitOpen(false)} onSuccess={() => setIsSplitOpen(false)} />
-            )}
-            {mounted && isEditOpen && (
-                <EditParcelaModal parcela={parcela} onClose={() => setIsEditOpen(false)} />
-            )}
-            {mounted && isDeleteOpen && (
-                <DeleteParcelaModal parcela={parcela} onClose={() => setIsDeleteOpen(false)} />
-            )}
+            {mounted && isDetailsOpen && <ParcelaDetailsModal parcelaId={parcela.id} onClose={() => setIsDetailsOpen(false)} />}
+            {mounted && isPaymentOpen && <PaymentModal parcela={parcela} onClose={() => setIsPaymentOpen(false)} onSuccess={() => setLocalPago(true)} />}
+            {mounted && isSplitOpen && <SplitModal parcela={parcela} onClose={() => setIsSplitOpen(false)} onSuccess={() => setIsSplitOpen(false)} />}
+            {mounted && isEditOpen && <EditParcelaModal parcela={parcela} onClose={() => setIsEditOpen(false)} />}
+            {mounted && isDeleteOpen && <DeleteParcelaModal parcela={parcela} onClose={() => setIsDeleteOpen(false)} />}
         </>
     );
 
-    // ── 1. ALREADY PAID ─────────────────────────────────────────────────────
+    // ── 1. ALREADY PAID ──
     if (isPago) {
         return (
-            <div className="flex flex-row items-center justify-end gap-1.5 w-full">
-                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#34C759]/70 h-6 px-2.5">
-                    <Check size={11} strokeWidth={2.5} />
-                    Recebido
-                </span>
-                <button
-                    onClick={() => setIsDetailsOpen(true)}
-                    title="Ver Ficha da Parcela"
-                    className="inline-flex items-center justify-center h-6 px-2.5 rounded-md bg-blue-500/10 border border-blue-500/10 hover:bg-blue-500/20 hover:border-blue-500/30 text-blue-400 transition-all"
-                >
-                    <Eye size={11} strokeWidth={2} />
+            <div className="flex flex-row items-center gap-2.5 w-full flex-nowrap min-w-max">
+                <button onClick={() => setIsDetailsOpen(true)} title="Ver Ficha da Parcela" className={`${actionBtn} bg-blue-500/10 border-blue-500/20 text-blue-400 hover:bg-blue-500/20 hover:scale-105`}>
+                    <Eye size={14} strokeWidth={2.5} />
                 </button>
-                {mounted && isDetailsOpen && (
-                    <ParcelaDetailsModal parcelaId={parcela.id} onClose={() => setIsDetailsOpen(false)} />
-                )}
+                {AllModals}
             </div>
         );
     }
 
-    // ── 2. RENOVAR CONTRATO ─────────────────────────────────────────────────
+    // ── 2. RENOVAR CONTRATO ──
     if (s === "RENOVAR CONTRATO") {
         const todayStr = new Date().toISOString().split("T")[0];
         const isLiberado = todayStr >= (parcela.data_vencimento || "2099-01-01");
         return (
-            <>
-                <div className="flex flex-row items-center justify-end gap-1.5">
-                    <button
-                        onClick={() => setIsRenewOpen(true)}
-                        disabled={!isLiberado}
-                        title={!isLiberado ? "Aguarde a data de término do contrato" : "Processar renovação"}
-                        className="h-6 px-2.5 text-[10px] font-bold uppercase tracking-widest rounded-md bg-[#34C759]/10 text-[#34C759] border border-[#34C759]/20 hover:bg-[#34C759]/20 hover:border-[#34C759]/40 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-                    >
-                        Renovar
-                    </button>
-                    <button
-                        onClick={() => setIsNotRenewOpen(true)}
-                        disabled={!isLiberado}
-                        title={!isLiberado ? "Aguarde a data de término do contrato" : "Registrar cancelamento/fim"}
-                        className="h-6 px-2.5 text-[10px] font-bold uppercase tracking-widest rounded-md bg-[#FF3B30]/10 text-[#FF3B30] border border-[#FF3B30]/20 hover:bg-[#FF3B30]/20 hover:border-[#FF3B30]/40 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-                    >
-                        Não Renovar
-                    </button>
-                </div>
-                {mounted && isRenewOpen && (
-                    <RenovarModal parcela={parcela} onClose={() => setIsRenewOpen(false)} />
-                )}
-                {mounted && isNotRenewOpen && (
-                    <NaoRenovarModal parcela={parcela} onClose={() => setIsNotRenewOpen(false)} />
-                )}
-            </>
-        );
-    }
-
-    // ── 3. VIEW-ONLY: terminal dead-debt statuses (INADIMPLENTE / PERDA DE FATURAMENTO) ──
-    if (isViewOnly) {
-        return (
-            <div className="flex flex-row items-center justify-end gap-1.5 w-full">
-                <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-md whitespace-nowrap ${
-                    s === "PERDA DE FATURAMENTO"
-                        ? "bg-[#FF3B30]/10 text-[#FF3B30] border border-[#FF3B30]/20"
-                        : "bg-[#FF453A]/10 text-[#FF453A]"
-                }`}>
-                    {s === "PERDA DE FATURAMENTO" ? "Perda" : "Inadimplente"}
-                </span>
-                <button
-                    onClick={() => setIsDetailsOpen(true)}
-                    title="Ver Ficha da Parcela"
-                    className="inline-flex items-center justify-center h-6 px-2.5 rounded-md bg-blue-500/10 border border-blue-500/10 hover:bg-blue-500/20 hover:border-blue-500/30 text-blue-400 transition-all"
-                >
-                    <Eye size={11} strokeWidth={2} />
-                </button>
-                {mounted && isDetailsOpen && (
-                    <ParcelaDetailsModal parcelaId={parcela.id} onClose={() => setIsDetailsOpen(false)} />
-                )}
+            <div className="flex flex-row items-center justify-end gap-2 w-full flex-nowrap min-w-max">
+                <button onClick={() => setIsRenewOpen(true)} disabled={!isLiberado} title="Processar renovação" className="h-8 px-3 text-[10px] font-bold uppercase tracking-widest rounded-lg bg-[#34C759]/10 text-[#34C759] border border-[#34C759]/20 hover:bg-[#34C759]/20 transition-all shrink-0">Renovar</button>
+                <button onClick={() => setIsNotRenewOpen(true)} disabled={!isLiberado} title="Registrar churn" className="h-8 px-3 text-[10px] font-bold uppercase tracking-widest rounded-lg bg-[#FF3B30]/10 text-[#FF3B30] border border-[#FF3B30]/20 hover:bg-[#FF3B30]/20 transition-all shrink-0">Churn</button>
+                {AllModals}
+                {mounted && isRenewOpen && <RenovarModal parcela={parcela} onClose={() => setIsRenewOpen(false)} />}
+                {mounted && isNotRenewOpen && <NaoRenovarModal parcela={parcela} onClose={() => setIsNotRenewOpen(false)} />}
             </div>
         );
     }
 
-    // ── 4. PARTIAL actions: EM_INADIMPLENCIA / EM_PERDA_FATURAMENTO ─────────
-    //    These are DB-synced states. Collection is still possible → show Baixa + Eye.
-    if (isPartialActionable) {
+    // ── 3. ACTIONABLE STATUSES ──
+    if (isActionable) {
         return (
-            <>
-                <div className="flex flex-row items-center justify-end gap-1.5 w-full">
-                    {/* Dar Baixa */}
-                    <button
-                        onClick={() => setIsPaymentOpen(true)}
-                        title="Registrar pagamento (cobrança em atraso)"
-                        className="inline-flex items-center justify-center h-6 px-2.5 gap-1 rounded-md bg-[#FF9500]/10 border border-[#FF9500]/20 hover:bg-[#FF9500]/20 hover:border-[#FF9500]/40 text-[#FF9500] text-[10px] font-semibold transition-all whitespace-nowrap"
-                    >
-                        <Check size={11} strokeWidth={2.5} />
-                        Baixa
-                    </button>
-                    {/* Ficha */}
-                    <button
-                        onClick={() => setIsDetailsOpen(true)}
-                        title="Ver Ficha da Parcela"
-                        className="inline-flex items-center justify-center h-6 px-2.5 rounded-md bg-blue-500/10 border border-blue-500/10 hover:bg-blue-500/20 hover:border-blue-500/30 text-blue-400 transition-all"
-                    >
-                        <Eye size={11} strokeWidth={2} />
-                    </button>
-                </div>
-                {mounted && isPaymentOpen && (
-                    <PaymentModal
-                        parcela={parcela}
-                        onClose={() => setIsPaymentOpen(false)}
-                        onSuccess={() => setLocalPago(true)}
-                    />
-                )}
-                {mounted && isDetailsOpen && (
-                    <ParcelaDetailsModal parcelaId={parcela.id} onClose={() => setIsDetailsOpen(false)} />
-                )}
-            </>
-        );
-    }
-
-    // ── 5. FULL actions: NORMAL + ATRASADO ──────────────────────────────────
-    return (
-        <>
-            <div className="flex flex-row items-center justify-end gap-1.5 w-full">
-                {/* Dar Baixa */}
-                <button
-                    onClick={() => setIsPaymentOpen(true)}
-                    title="Registrar pagamento"
-                    className="inline-flex items-center justify-center h-6 px-2.5 gap-1 rounded-md bg-[#34C759]/10 border border-[#34C759]/10 hover:bg-[#34C759]/20 hover:border-[#34C759]/30 text-[#34C759] text-[10px] font-semibold transition-all whitespace-nowrap"
-                >
-                    <Check size={11} strokeWidth={2.5} />
-                    Baixa
+            <div className="flex flex-row gap-2.5 w-full flex-nowrap">
+                {/* Baixa — ALWAYS GREEN */}
+                <button onClick={() => setIsPaymentOpen(true)} title="Dar Baixa" className={`h-8 px-3 flex items-center justify-center gap-1.5 rounded-lg bg-[#34C759]/10 border border-[#34C759]/30 text-[#34C759] hover:bg-[#34C759]/20 hover:scale-105 shadow-[0_0_12px_rgba(52,199,89,0.15)] transition-all shrink-0`}>
+                    <Check size={15} strokeWidth={3} />
                 </button>
 
-                {/* Info / Eye Details */}
-                <button
-                    onClick={() => setIsDetailsOpen(true)}
-                    title="Ver Ficha da Parcela"
-                    className="inline-flex items-center justify-center h-6 px-2.5 rounded-md bg-blue-500/10 border border-blue-500/10 hover:bg-blue-500/20 hover:border-blue-500/30 text-blue-400 transition-all"
-                >
-                    <Eye size={11} strokeWidth={2} />
+                {/* Ficha */}
+                <button onClick={() => setIsDetailsOpen(true)} title="Ficha Completa" className={`${actionBtn} bg-blue-500/10 border-blue-500/20 text-blue-400 hover:bg-blue-500/20 hover:scale-105`}>
+                    <Eye size={14} strokeWidth={2.5} />
                 </button>
 
-                {/* Dividir (split) */}
+                {/* Split */}
                 {showSplit && (
-                    <button
-                        onClick={() => setIsSplitOpen(true)}
-                        title="Desmembrar parcela"
-                        className="inline-flex items-center justify-center h-6 px-2.5 rounded-md bg-blue-500/10 border border-blue-500/10 hover:bg-blue-500/20 hover:border-blue-500/30 text-blue-400 transition-all"
-                    >
-                        <Split size={11} strokeWidth={2.5} />
+                    <button onClick={() => setIsSplitOpen(true)} title="Desmembrar" className={`${actionBtn} bg-white/5 border-white/10 text-gray-300 hover:bg-white/10 hover:scale-105`}>
+                        <Split size={14} strokeWidth={2.5} />
                     </button>
                 )}
 
-                {/* Editar */}
+                {/* Edit */}
                 {showEditDelete && (
-                    <button
-                        onClick={() => setIsEditOpen(true)}
-                        title="Editar parcela"
-                        className="inline-flex items-center justify-center h-6 px-2.5 rounded-md bg-white/5 border border-white/5 hover:bg-white/10 hover:border-white/10 text-gray-300 transition-all"
-                    >
-                        <Pencil size={11} strokeWidth={2.5} />
+                    <button onClick={() => setIsEditOpen(true)} title="Editar" className={`${actionBtn} bg-white/5 border-white/10 text-gray-300 hover:bg-white/10 hover:scale-105`}>
+                        <Pencil size={14} strokeWidth={2.5} />
                     </button>
                 )}
 
-                {/* Deletar */}
+                {/* Delete */}
                 {showEditDelete && (
-                    <button
-                        onClick={() => setIsDeleteOpen(true)}
-                        title="Excluir parcela"
-                        className="inline-flex items-center justify-center h-6 px-2.5 rounded-md bg-[#FF3B30]/10 border border-[#FF3B30]/10 hover:bg-[#FF3B30]/20 hover:border-[#FF3B30]/30 text-[#FF3B30] transition-all"
-                    >
-                        <Trash2 size={11} strokeWidth={2.5} />
+                    <button onClick={() => setIsDeleteOpen(true)} title="Excluir" className={`${actionBtn} bg-[#FF3B30]/10 border-[#FF3B30]/20 text-[#FF3B30] hover:bg-[#FF3B30]/20 hover:scale-105`}>
+                        <Trash2 size={14} strokeWidth={2.5} />
                     </button>
                 )}
+                {AllModals}
             </div>
+        );
+    }
 
+    // ── 4. FALLBACK ──
+    return (
+        <div className="flex flex-row items-center justify-end gap-2.5 w-full flex-nowrap min-w-max">
+            <button onClick={() => setIsDetailsOpen(true)} title="Ver Ficha da Parcela" className={`${actionBtn} bg-blue-500/10 border-blue-500/20 text-blue-400 hover:bg-blue-500/20 hover:scale-105`}>
+                <Eye size={14} strokeWidth={2.5} />
+            </button>
             {AllModals}
-        </>
+        </div>
     );
 }

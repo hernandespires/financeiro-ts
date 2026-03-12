@@ -43,10 +43,10 @@ export async function registrarPagamentoCompleto(
 ): Promise<ActionResult> {
     try {
         await requireAuth();
-        // ── Step 1: Fetch context — need numero_referencia, contrato and client ──
+        // ── Step 1: Fetch context — need numero_referencia, contrato, client, and current bruto ──
         const { data: parcela, error: fetchErr } = await supabaseAdmin
             .from('parcelas')
-            .select('numero_referencia, sub_indice, contrato_id, contratos(cliente_id, forma_pagamento)')
+            .select('numero_referencia, sub_indice, contrato_id, valor_bruto, valor_previsto, contratos(cliente_id, forma_pagamento, valor_total_contrato)')
             .eq('id', parcelaId)
             .single();
 
@@ -88,6 +88,22 @@ export async function registrarPagamentoCompleto(
         if (updateError) {
             console.error('[registrarPagamentoCompleto] Erro ao atualizar parcela:', updateError.message);
             return { ok: false, error: updateError.message };
+        }
+
+        // ── Step 3b: If juros was applied — propagate the difference to the contract total ──
+        if (novoValorBruto !== undefined && contratoId) {
+            const oldBruto = Number((parcela as any).valor_bruto ?? parcela.valor_previsto ?? 0);
+            const diferenca = parseFloat((novoValorBruto - oldBruto).toFixed(2));
+            if (diferenca > 0) {
+                const currentTotal = Number(contratoData?.valor_total_contrato ?? NaN);
+                if (!isNaN(currentTotal) && isFinite(currentTotal)) {
+                    const novoTotal = parseFloat((currentTotal + diferenca).toFixed(2));
+                    await supabaseAdmin
+                        .from('contratos')
+                        .update({ valor_total_contrato: novoTotal } as any)
+                        .eq('id', contratoId);
+                }
+            }
         }
 
         const { error: insertError } = await supabaseAdmin
