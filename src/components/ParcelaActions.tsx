@@ -322,16 +322,11 @@ function ParcelaDetailsModal({
     const anexoUrl = pag?.anexo_url;
     const isPdf = anexoUrl?.toLowerCase().endsWith('.pdf');
 
-    // ── Read status directly from DB (no shadow-state calculations) ────────────────
+    // ── Lógica rigorosa de Status ────────────────
     const parcelStatus: string = data.status_manual_override || 'NORMAL';
     const isPago = parcelStatus === 'PAGO' || parcelStatus === 'INADIMPLENTE RECEBIDO';
-    // "Dead debt" statuses: no prediction, no interest — they are DB-confirmed
-    const isDeadDebt = [
-        'INADIMPLENTE', 'PERDA DE FATURAMENTO',
-        'EM_INADIMPLENCIA', 'EM_PERDA_FATURAMENTO',
-    ].includes(parcelStatus);
+    const isDeadDebt = ['INADIMPLENTE', 'PERDA DE FATURAMENTO', 'EM_INADIMPLENCIA', 'EM_PERDA_FATURAMENTO'].includes(parcelStatus);
 
-    // Days late (for juros calculation only — not for status override)
     const todayStr = new Date().toISOString().split("T")[0];
     const vencimentoStr = data.data_vencimento || "";
     let daysLate = 0;
@@ -341,23 +336,21 @@ function ParcelaDetailsModal({
         daysLate = Math.floor((t2 - t1) / (1000 * 3600 * 24));
     }
 
-    // Juros — use stored value if exists, otherwise estimate
+    // Juros
     let jurosCalculado = data.juros_aplicado || 0;
     if (!jurosCalculado && daysLate >= 10 && !isPago) {
         const mesesAtraso = Math.ceil(daysLate / 30) || 1;
         jurosCalculado = (data.valor_bruto || data.valor_previsto || 0) * 0.015 * mesesAtraso;
     }
 
-    // ── Disponibilidade prediction (strict business rules) ────────────────────
+    // Datas e Plataforma
     let txPlatform = (ct.forma_pagamento || '').toUpperCase();
     if (pag?.plataforma) txPlatform = pag.plataforma.toUpperCase();
 
     let disponivelText = "\u2014";
     if (pag && pag.disponivel_em) {
-        // PAID: show the actual recorded date
         disponivelText = pag.disponivel_em.split('-').reverse().join('/');
     } else if (!isPago && !isDeadDebt && vencimentoStr) {
-        // UNPAID + healthy (NORMAL/ATRASADO): estimate by platform
         const refDate = new Date(vencimentoStr + 'T12:00:00');
         if (txPlatform.includes('STRIPE')) {
             refDate.setDate(refDate.getDate() + 5);
@@ -369,23 +362,35 @@ function ParcelaDetailsModal({
                 if (dow !== 0 && dow !== 6) bizDays++;
             }
         }
-        // PIX = same day (no offset)
         const iso = refDate.toISOString().split('T')[0];
         disponivelText = `~ ${iso.split('-').reverse().join('/')}`;
     }
-    // Dead debts and pre-payment rows keep the default "—"
+
+    // Observação
+    const observacaoFinal = data.observacao || pag?.observacao || "—";
+
+    // Cálculo inteligente do Valor Total do Contrato
+    const valorTotalContrato = ct.valor_total_contrato || ct.valor_total || ct.valor_contrato || (data.valor_previsto * (ct.parcelas_total || 1));
+
+    // Cores das Badges da Ficha
+    let badgeColor = "text-gray-400 bg-white/5 border-white/10";
+    if (isPago) badgeColor = "text-[#34C759] bg-[#34C759]/10 border-[#34C759]/20";
+    else if (['PERDA DE FATURAMENTO', 'EM_PERDA_FATURAMENTO'].includes(parcelStatus)) badgeColor = "text-[#FF3B30] bg-[#FF3B30]/10 border-[#FF3B30]/20"; 
+    else if (['INADIMPLENTE', 'EM_INADIMPLENCIA'].includes(parcelStatus)) badgeColor = "text-[#FF453A] bg-[#FF453A]/10 border-[#FF453A]/20"; 
+    else if (parcelStatus === 'ATRASADO') badgeColor = "text-[#FF9500] bg-[#FF9500]/10 border-[#FF9500]/20";
+    else if (daysLate >= -3 && daysLate <= 0 && !isPago) badgeColor = "text-[#FFD60A] bg-[#FFD60A]/10 border-[#FFD60A]/20"; 
 
     const SectionTitle = ({ label, color }: { label: string, color: string }) => (
         <h3 className={`text-[10px] font-bold ${color} uppercase tracking-widest pl-1 mt-2 mb-1`}>{label}</h3>
     );
 
     const InfoBox = ({ label, value, highlight, link }: { label: string, value: string, highlight?: string, link?: string }) => (
-        <div className="flex flex-col p-3 rounded-xl bg-black border border-white/5">
-            <span className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">{label}</span>
+        <div className="flex flex-col p-3.5 rounded-xl bg-[#0A0A0A] border border-white/5 shadow-inner">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">{label}</span>
             {link ? (
-                <a href={link} target="_blank" rel="noopener noreferrer" className={`text-base font-medium break-words ${highlight || 'text-white hover:underline'}`}>{value}</a>
+                <a href={link} target="_blank" rel="noopener noreferrer" className={`text-sm font-semibold break-words ${highlight || 'text-white hover:text-blue-400 transition-colors'}`}>{value}</a>
             ) : (
-                <span className={`text-base font-medium break-words ${highlight || 'text-white'}`}>{value}</span>
+                <span className={`text-sm font-semibold break-words ${highlight || 'text-white'}`}>{value}</span>
             )}
         </div>
     );
@@ -394,90 +399,123 @@ function ParcelaDetailsModal({
         <Modal onClose={onClose} title="Ficha da Parcela" subtitle={`Raio-X Completo da Fatura #${data.numero_referencia}`} icon={<Eye size={18} className="text-blue-400" />} maxWidth="5xl">
             <div className="flex flex-col gap-4 w-full pb-2 overflow-y-auto max-h-[75vh] pr-2 custom-scrollbar">
 
-                {/* 1. SECTION: DOSSIÊ DO CLIENTE */}
-                <div className="flex flex-col gap-1.5 bg-[#1C1C1E] p-4 rounded-2xl border border-white/5">
+{/* 1. SECTION: DOSSIÊ DO CLIENTE */}
+                <div className="flex flex-col gap-3 bg-[#111] p-5 rounded-2xl border border-white/5">
                     <SectionTitle label="1. Dossiê do Cliente" color="text-gray-400" />
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mt-1">
+                    
+                    {/* Linha 1: Dados Cadastrais */}
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-1">
                         <InfoBox label="Nome" value={cl.nome_cliente || 'N/A'} highlight="text-white" />
                         <InfoBox label="Empresa" value={cl.empresa_label || cl.nome_cliente || 'N/A'} />
-                        <div className="flex flex-col p-3 rounded-xl bg-black border border-white/5">
-                            <span className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">Status</span>
-                            <div className="mt-0.5">
-                                <span className={`px-2 py-0.5 rounded text-xs font-bold tracking-wider ${cl.status_cliente === 'INADIMPLENTE' ? 'bg-[#FF3B30]/10 text-[#FF3B30]' :
-                                    cl.status_cliente === 'ATIVO' ? 'bg-[#34C759]/10 text-[#34C759]' :
-                                        'bg-white/10 text-gray-300'
-                                    }`}>{cl.status_cliente || 'N/A'}</span>
+                        {/* Inteligência para capturar o nome da coluna de Segmento */}
+                        <InfoBox label="Segmento" value={cl.segmento || cl.segmento_atuacao || cl.nicho || cl.setor || '—'} />
+                        <InfoBox label="Board Asana" value={cl.link_asana ? "Abrir Link" : "—"} link={cl.link_asana} highlight={cl.link_asana ? "text-blue-400" : "text-gray-500"} />
+                    </div>
+
+                    {/* Linha 2: Operacional / Status */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div className="flex flex-col p-3.5 rounded-xl bg-[#0A0A0A] border border-white/5 shadow-inner">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">Status do Cliente</span>
+                            <div className="flex">
+                                {/* whitespace-nowrap impede que o texto quebre em duas linhas */}
+                                <span className={`px-3 py-1.5 rounded-md text-[10px] font-bold tracking-widest uppercase border whitespace-nowrap ${
+                                    cl.status_cliente === 'INADIMPLENTE' ? 'bg-[#FF453A]/10 text-[#FF453A] border-[#FF453A]/20' : 
+                                    cl.status_cliente === 'PERDA DE FATURAMENTO' ? 'bg-[#FF3B30]/10 text-[#FF3B30] border-[#FF3B30]/20' : 
+                                    cl.status_cliente === 'ATIVO' ? 'bg-[#34C759]/10 text-[#34C759] border-[#34C759]/20' : 
+                                    'bg-white/5 text-gray-400 border-white/10'
+                                }`}>
+                                    {cl.status_cliente || 'N/A'}
+                                </span>
                             </div>
                         </div>
                         <InfoBox label="Categoria" value={data.categoria || 'N/A'} />
                         <InfoBox label="Agência" value={ct.dim_agencias?.nome || '—'} />
-                        <InfoBox label="Board Asana" value={cl.link_asana ? "Abrir Link" : "—"} link={cl.link_asana} highlight={cl.link_asana ? "text-blue-400" : "text-gray-500"} />
                     </div>
                 </div>
 
                 {/* 2. SECTION: RAIO-X DA PARCELA */}
-                <div className="flex flex-col gap-1.5 bg-[#1C1C1E] p-4 rounded-2xl border border-white/5">
-                    <SectionTitle label="2. Raio-X da Parcela" color="text-[#ffa300]" />
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mt-1">
-                        <InfoBox label="Parcela" value={`${data.numero_referencia}${data.sub_indice ? `-${data.sub_indice}` : ''} / ${ct.parcelas_total || data.numero_referencia}`} />
-                        <InfoBox label="Vencimento" value={vencimentoStr ? vencimentoStr.split('-').reverse().join('/') : '—'} />
-                        <div className="flex flex-col p-3 rounded-xl bg-black border border-white/5">
-                            <span className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">Status Op.</span>
-                            <div className="mt-0.5">
-                                <span className={`px-2 py-0.5 rounded text-xs font-bold tracking-wider ${isPago ? 'bg-[#34C759]/10 text-[#34C759]' : isDeadDebt || parcelStatus === 'ATRASADO' ? 'bg-[#FF3B30]/10 text-[#FF3B30]' :
-                                    'bg-[#ffa300]/10 text-[#ffa300]'
-                                    }`}>{parcelStatus}</span>
+                <div className="flex flex-col gap-2 bg-[#111] p-5 rounded-2xl border border-white/5">
+                    <SectionTitle label="2. Detalhes da Cobrança" color="text-[#ffa300]" />
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-1">
+                        <InfoBox label="Vencimento" value={vencimentoStr ? vencimentoStr.split('-').reverse().join('/') : '—'} highlight="font-mono text-gray-200 text-lg" />
+                        <InfoBox label="Parcela Atual" value={`${data.numero_referencia}${data.sub_indice ? `-${data.sub_indice}` : ''} de ${ct.parcelas_total || data.numero_referencia}`} highlight="font-mono text-gray-200 text-lg" />
+                        
+                        <div className="flex flex-col p-3.5 rounded-xl bg-[#0A0A0A] border border-white/5 shadow-inner">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">Status da Fatura</span>
+                            <div className="flex">
+                                <span className={`px-2.5 py-1 rounded-md text-[10px] font-bold tracking-widest uppercase border whitespace-nowrap ${badgeColor}`}>
+                                    {parcelStatus}
+                                </span>
                             </div>
                         </div>
-                        <InfoBox label="Atraso (Dias)" value={daysLate > 0 && !isPago ? `${daysLate} dias` : '—'} highlight={daysLate > 0 && !isPago ? "text-[#FF3B30]" : "text-gray-500"} />
-                        <InfoBox label="Forma Pagamento" value={ct.forma_pagamento || '—'} />
-                        <InfoBox label="Observação" value={data.observacao || '—'} highlight={data.observacao ? "text-gray-300 whitespace-pre-wrap max-h-20 overflow-y-auto" : "text-gray-500"} />
-                        {/* 1 */} <InfoBox label="Plano / Contrato" value={ct.tipo_contrato || '—'} />
-                        {/* 2 */} <InfoBox label="Fração da Parcela" value={data.numero_referencia && ct.parcelas_total ? `${data.numero_referencia} / ${ct.parcelas_total}` : '—'} />
-                        {/* 3 */} <InfoBox label="Ticket Mensal (Base)" value={brl(ct.valor_base_parcela)} />
-                        {/* 4 */} <InfoBox label="Valor Total (Contrato)" value={brl(ct.valor_total_contrato)} highlight="text-orange-400 font-mono font-bold" />
+
+                        <InfoBox 
+                            label="Atraso (Dias)" 
+                            value={isPago ? "Resolvido" : (daysLate > 0 ? `${daysLate} dias` : "No Prazo")} 
+                            highlight={isPago ? "text-gray-500 font-medium" : (daysLate > 0 ? "text-[#FF9500] font-bold" : "text-[#34C759] font-medium")} 
+                        />
+                        
+                        <div className="col-span-2 md:col-span-4">
+                            <div className="flex flex-col p-3.5 rounded-xl bg-[#0A0A0A] border border-white/5 shadow-inner">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">Valor Total (Contrato)</span>
+                                <span className="text-xl font-mono font-bold text-[#ffa300]">
+                                    {brl(valorTotalContrato)}
+                                </span>
+                            </div>
+                        </div>
+                        
+                        <div className="col-span-2 md:col-span-4">
+                            <InfoBox label="Observação / Anotações" value={observacaoFinal} highlight={observacaoFinal !== "—" ? "text-gray-300 whitespace-pre-wrap font-normal" : "text-gray-600"} />
+                        </div>
                     </div>
                 </div>
 
                 {/* 3. SECTION: AUDITORIA FINANCEIRA */}
-                <div className="flex flex-col gap-1.5 bg-[#1C1C1E] p-4 rounded-2xl border border-white/5">
+                <div className="flex flex-col gap-2 bg-[#111] p-5 rounded-2xl border border-white/5">
                     <div className="flex items-center justify-between">
                         <SectionTitle label="3. Auditoria Financeira" color="text-[#34C759]" />
-                        <span className="text-xs font-semibold text-gray-500 bg-white/5 px-2 py-0.5 rounded-lg">FLUXO DO DINHEIRO</span>
+                        <span className="text-[9px] font-bold text-gray-500 uppercase tracking-widest bg-white/5 border border-white/10 px-2 py-1 rounded-md">Fluxo de Caixa</span>
                     </div>
 
-                    <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mt-1">
-                        {/* 1 */} <InfoBox label="Valor Bruto" value={fmtNum(data.valor_bruto || data.valor_previsto)} highlight="text-white font-mono" />
-                        {/* 2 */} <InfoBox label="Previsto Líquido" value={fmtNum(data.valor_previsto)} highlight="text-[#ffa300] font-mono font-bold" />
-                        {/* 3 */} <InfoBox label="Valor Pago Plataforma" value={pag ? fmtNum(pag.valor_pago) : "—"} highlight={pag ? "text-white font-mono" : "text-gray-500 font-mono"} />
-                        {/* 4 */} <InfoBox label="Plataforma Recebimento" value={pag ? pag.plataforma : "—"} />
-                        {/* 5 */} <InfoBox label={`% Imposto NF (${ct.imposto_percentual || 0}%)`} value={pag ? fmtNum(pag.imposto_retido) : "—"} highlight="text-rose-400 font-mono" />
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-1">
+                        <InfoBox label="Valor Bruto Esperado" value={fmtNum(data.valor_bruto || data.valor_previsto)} highlight="text-white font-mono text-lg" />
+                        <InfoBox label="Juros Aplicado" value={fmtNum(jurosCalculado)} highlight={jurosCalculado > 0 ? "text-[#FF3B30] font-mono text-lg" : "text-gray-600 font-mono text-lg"} />
+                        <InfoBox label={`Imposto Retido (${ct.imposto_percentual || 0}%)`} value={pag ? fmtNum(pag.imposto_retido) : "—"} highlight="text-rose-400 font-mono" />
+                        <InfoBox label="Plataforma de Recebimento" value={pag ? pag.plataforma : txPlatform} />
+                        
+                        <InfoBox label="Valor Recebido (Plataforma)" value={pag ? fmtNum(pag.valor_pago) : "—"} highlight={pag ? "text-blue-400 font-mono text-lg" : "text-gray-600 font-mono text-lg"} />
+                        <InfoBox label="Taxa do Gateway" value={pag ? fmtNum(pag.taxa_gateway) : "—"} highlight="text-rose-400 font-mono" />
+                        <InfoBox label="Data do Pagamento" value={pag && pag.data_pagamento ? pag.data_pagamento.split('-').reverse().join('/') : "—"} highlight="font-mono text-gray-300" />
+                        <InfoBox label="Previsão de Saque" value={disponivelText} highlight="font-mono text-gray-300" />
 
-                        {/* 6 */} <InfoBox label="Taxa Plataforma" value={pag ? fmtNum(pag.taxa_gateway) : "—"} highlight="text-rose-400 font-mono" />
-                        {/* 7 */} <InfoBox label="Juros Aplicado" value={fmtNum(jurosCalculado)} highlight={jurosCalculado > 0 ? "text-[#FF3B30] font-mono" : "text-gray-500 font-mono"} />
-                        {/* 8 */} <InfoBox label="Líquido Real Na Conta" value={pag && pag.valor_liquido_real !== undefined ? fmtNum(pag.valor_liquido_real) : "—"} highlight={pag ? "text-[#34C759] font-mono font-bold" : "text-gray-500 font-mono"} />
-                        {/* 9 */} <InfoBox label="Data Pagamento" value={pag && pag.data_pagamento ? pag.data_pagamento.split('-').reverse().join('/') : "—"} />
-                        {/* 10 */} <InfoBox label="Disponível Em" value={disponivelText} />
+                        <div className="col-span-2 md:col-span-4 mt-2">
+                            <div className="flex flex-col p-4 rounded-xl bg-[#34C759]/5 border border-[#34C759]/20 shadow-inner">
+                                <span className="text-[11px] font-bold uppercase tracking-wider text-[#34C759]/70 mb-1">Líquido Real Depositado na Conta</span>
+                                <span className={`text-2xl font-mono font-black ${pag ? "text-[#34C759]" : "text-gray-600"}`}>
+                                    {pag && pag.valor_liquido_real !== undefined ? fmtNum(pag.valor_liquido_real) : "—"}
+                                </span>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
                 {/* 4. SECTION: ANEXO */}
-                <div className="flex flex-col gap-1.5 bg-[#1C1C1E] p-4 rounded-2xl border border-white/5">
+                <div className="flex flex-col gap-1.5 bg-[#111] p-4 rounded-2xl border border-white/5">
                     <SectionTitle label="4. COMPROVANTE (ANEXO)" color="text-blue-400" />
                     {anexoUrl ? (
                         <>
                             <div className="flex items-center justify-between mt-1">
                                 <span className="text-xs text-gray-400">Arquivo recebido e anexado.</span>
-                                <a href={anexoUrl} target="_blank" download rel="noopener noreferrer" className="text-[10px] font-semibold text-gray-400 hover:text-white flex items-center gap-1 transition-colors bg-black px-3 py-1.5 rounded-lg border border-white/10">
-                                    <Download size={10} /> Download / Abrir em nova guia
+                                <a href={anexoUrl} target="_blank" download rel="noopener noreferrer" className="text-[10px] font-bold uppercase tracking-widest text-gray-400 hover:text-white flex items-center gap-1.5 transition-colors bg-[#0A0A0A] px-4 py-2 rounded-lg border border-white/10 shadow-inner">
+                                    <Download size={12} /> Fazer Download
                                 </a>
                             </div>
 
                             {isPdf ? (
-                                <iframe src={`${anexoUrl}#toolbar=0`} className="w-full h-96 rounded-lg bg-white border border-white/10 mt-2" />
+                                <iframe src={`${anexoUrl}#toolbar=0`} className="w-full h-96 rounded-xl bg-[#0A0A0A] border border-white/10 mt-3" />
                             ) : (
                                 <img src={anexoUrl} alt="Comprovante"
-                                    className="w-full max-h-[600px] object-contain rounded-lg border border-white/10 mt-2"
+                                    className="w-full max-h-[600px] object-contain rounded-xl border border-white/10 mt-3"
                                     onError={(e) => {
                                         const t = e.currentTarget;
                                         t.style.display = 'none';
@@ -489,8 +527,8 @@ function ParcelaDetailsModal({
                             )}
                         </>
                     ) : (
-                        <div className="mt-2 p-4 rounded-xl bg-black border border-white/5 text-center">
-                            <span className="text-gray-500 text-sm">Nenhum comprovante anexado.</span>
+                        <div className="mt-2 p-6 rounded-xl bg-[#0A0A0A] border border-white/5 text-center shadow-inner">
+                            <span className="text-gray-600 text-sm font-medium">Nenhum comprovante anexado a esta fatura.</span>
                         </div>
                     )}
                 </div>
@@ -875,7 +913,7 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
     // ── 1. ALREADY PAID ──
     if (isPago) {
         return (
-            <div className="flex flex-row items-center gap-2.5 w-full flex-nowrap min-w-max">
+            <div className="flex flex-row items-center justify-start gap-2 w-full flex-nowrap min-w-max">
                 <button onClick={() => setIsDetailsOpen(true)} title="Ver Ficha da Parcela" className={`${actionBtn} bg-blue-500/10 border-blue-500/20 text-blue-400 hover:bg-blue-500/20 hover:scale-105`}>
                     <Eye size={14} strokeWidth={2.5} />
                 </button>
@@ -889,7 +927,7 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
         const todayStr = new Date().toISOString().split("T")[0];
         const isLiberado = todayStr >= (parcela.data_vencimento || "2099-01-01");
         return (
-            <div className="flex flex-row items-center justify-end gap-2 w-full flex-nowrap min-w-max">
+            <div className="flex flex-row items-center justify-start gap-2 w-full flex-nowrap min-w-max">
                 <button onClick={() => setIsRenewOpen(true)} disabled={!isLiberado} title="Processar renovação" className="h-8 px-3 text-[10px] font-bold uppercase tracking-widest rounded-lg bg-[#34C759]/10 text-[#34C759] border border-[#34C759]/20 hover:bg-[#34C759]/20 transition-all shrink-0">Renovar</button>
                 <button onClick={() => setIsNotRenewOpen(true)} disabled={!isLiberado} title="Registrar churn" className="h-8 px-3 text-[10px] font-bold uppercase tracking-widest rounded-lg bg-[#FF3B30]/10 text-[#FF3B30] border border-[#FF3B30]/20 hover:bg-[#FF3B30]/20 transition-all shrink-0">Churn</button>
                 {AllModals}
@@ -940,7 +978,7 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
 
     // ── 4. FALLBACK ──
     return (
-        <div className="flex flex-row items-center justify-end gap-2.5 w-full flex-nowrap min-w-max">
+        <div className="flex flex-row items-center justify-start gap-2.5 w-full flex-nowrap min-w-max">
             <button onClick={() => setIsDetailsOpen(true)} title="Ver Ficha da Parcela" className={`${actionBtn} bg-blue-500/10 border-blue-500/20 text-blue-400 hover:bg-blue-500/20 hover:scale-105`}>
                 <Eye size={14} strokeWidth={2.5} />
             </button>
