@@ -62,10 +62,34 @@ function PaymentModal({
 }) {
     const brutoOriginal = parcela.valor_bruto ?? parcela.valor_previsto ?? 0;
 
-    const [valorPlataforma, setValorPlataforma] = useState(brutoOriginal.toFixed(2));
+    let initialJuros = 0;
+    if (parcela.data_vencimento) {
+        const todayStr = new Date().toISOString().split("T")[0];
+        if (todayStr > parcela.data_vencimento) {
+            const t1 = new Date(parcela.data_vencimento).getTime();
+            const t2 = new Date(todayStr).getTime();
+            const daysLate = Math.floor((t2 - t1) / (1000 * 3600 * 24));
+            if (daysLate >= 10) {
+                const mesesAtraso = Math.ceil(daysLate / 30);
+                initialJuros = brutoOriginal * 0.015 * mesesAtraso;
+            }
+        }
+    }
+
+    const [jurosCalculado] = useState(initialJuros);
+    const [cobrarJuros, setCobrarJuros] = useState(false);
+
+    const baseBruto = brutoOriginal;
+    const expectedBruto = cobrarJuros && jurosCalculado > 0 ? baseBruto + jurosCalculado : baseBruto;
+
+    const [valorPlataforma, setValorPlataforma] = useState(expectedBruto.toFixed(2));
     const [dataPagamento, setDataPagamento] = useState(todayISO());
     const [plataforma, setPlataforma] = useState(parcela.forma_pagamento_contrato || 'PIX');
     const [observacao, setObservacao] = useState(parcela.observacao || '');
+
+    useEffect(() => {
+        setValorPlataforma(expectedBruto.toFixed(2));
+    }, [expectedBruto]);
     
     // Drag & Drop state
     const [file, setFile] = useState<File | null>(null);
@@ -126,27 +150,10 @@ function PaymentModal({
             }
 
             // --- NEW FINANCIAL MATH CALCULATIONS ---
-            const valorBruto = parcela.valor_bruto ?? parcela.valor_previsto ?? 0;
             const impostoPerc = parcela.imposto_percentual ?? 0;
-            const taxaPlataforma = Math.max(0, valorBruto - numPlataforma);
+            const taxaPlataforma = Math.max(0, expectedBruto - numPlataforma);
             const impostoRetido = numPlataforma * (impostoPerc / 100);
             const valorLiquidoReal = numPlataforma - impostoRetido;
-
-            // --- LATE FEE MATH CALCULATIONS ---
-            let jurosAplicado = 0;
-            if (parcela.data_vencimento) {
-                const todayStr = new Date().toISOString().split("T")[0];
-                if (todayStr > parcela.data_vencimento) {
-                    const t1 = new Date(parcela.data_vencimento).getTime();
-                    const t2 = new Date(todayStr).getTime();
-                    const daysLate = Math.floor((t2 - t1) / (1000 * 3600 * 24));
-                    
-                    if (daysLate >= 10) {
-                        const mesesAtraso = Math.ceil(daysLate / 30);
-                        jurosAplicado = valorBruto * 0.015 * mesesAtraso;
-                    }
-                }
-            }
 
             const res = await registrarPagamentoCompleto(
                 parcela.id,
@@ -154,11 +161,12 @@ function PaymentModal({
                 taxaPlataforma, 
                 impostoRetido, 
                 valorLiquidoReal,
-                jurosAplicado, 
+                cobrarJuros ? jurosCalculado : 0, 
                 dataPagamento,
                 plataforma,
                 observacao || undefined,
-                anexoUrl
+                anexoUrl,
+                cobrarJuros ? expectedBruto : undefined
             );
             
             setIsUploading(false);
@@ -192,11 +200,31 @@ function PaymentModal({
                     </div>
                 </div>
 
+                {jurosCalculado > 0 && (
+                    <div className="flex flex-col gap-2 p-3 rounded-xl bg-[#FF3B30]/10 border border-[#FF3B30]/20 max-w-full">
+                        <div className="flex items-center gap-2 text-[#FF3B30]">
+                            <AlertTriangle size={16} />
+                            <span className="text-sm font-semibold">
+                                Esta parcela está atrasada. Juros acumulado: {brl(jurosCalculado)}
+                            </span>
+                        </div>
+                        <label className="flex items-center gap-2 cursor-pointer mt-1">
+                            <input 
+                                type="checkbox" 
+                                checked={cobrarJuros}
+                                onChange={(e) => setCobrarJuros(e.target.checked)}
+                                className="w-4 h-4 rounded border-white/20 bg-black/50 text-[#ffa300] focus:ring-[#ffa300]/30"
+                            />
+                            <span className="text-xs text-gray-300">Cobrar e adicionar juros ao valor bruto da parcela?</span>
+                        </label>
+                    </div>
+                )}
+
                 <div className="flex flex-col gap-1.5">
                     <label className={labelCls}>Valor Recebido (Líquido)</label>
                     <input type="number" min="0.01" step="0.01" value={valorPlataforma}
                         onChange={(e) => setValorPlataforma(e.target.value)}
-                        placeholder={(parcela.valor_bruto ?? parcela.valor_previsto ?? 0).toFixed(2)}
+                        placeholder={expectedBruto.toFixed(2)}
                         className={`${inputCls} text-green-400 font-bold text-base`}
                         autoFocus />
                 </div>
@@ -295,7 +323,16 @@ function ParcelaDetailsModal({
     const anexoUrl = pag?.anexo_url;
     const isPdf = anexoUrl?.toLowerCase().endsWith('.pdf');
 
-    // Calculations
+    // ── Read status directly from DB (no shadow-state calculations) ────────────────
+    const parcelStatus: string = data.status_manual_override || 'NORMAL';
+    const isPago = parcelStatus === 'PAGO' || parcelStatus === 'INADIMPLENTE RECEBIDO';
+    // "Dead debt" statuses: no prediction, no interest — they are DB-confirmed
+    const isDeadDebt = [
+        'INADIMPLENTE', 'PERDA DE FATURAMENTO',
+        'EM_INADIMPLENCIA', 'EM_PERDA_FATURAMENTO',
+    ].includes(parcelStatus);
+
+    // Days late (for juros calculation only — not for status override)
     const todayStr = new Date().toISOString().split("T")[0];
     const vencimentoStr = data.data_vencimento || "";
     let daysLate = 0;
@@ -305,39 +342,39 @@ function ParcelaDetailsModal({
         daysLate = Math.floor((t2 - t1) / (1000 * 3600 * 24));
     }
 
-    // Status logic (simulating page.tsx logic as requested)
-    let parcelStatus = data.status_manual_override;
-    if (parcelStatus === 'NORMAL') {
-        if (daysLate >= 15) parcelStatus = 'INADIMPLENTE';
-        else if (daysLate > 0) parcelStatus = 'ATRASADO';
-        else parcelStatus = 'EM DIA';
-    }
-
-    const isPago = parcelStatus === 'PAGO' || parcelStatus === 'INADIMPLENTE RECEBIDO';
-    const isSujo = parcelStatus === 'INADIMPLENTE' || parcelStatus === 'PERDA DE FATURAMENTO';
-
-    // Juros Dinâmico calculation
+    // Juros — use stored value if exists, otherwise estimate
     let jurosCalculado = data.juros_aplicado || 0;
     if (!jurosCalculado && daysLate >= 10 && !isPago) {
         const mesesAtraso = Math.ceil(daysLate / 30) || 1;
         jurosCalculado = (data.valor_bruto || data.valor_previsto || 0) * 0.015 * mesesAtraso;
     }
-    
-    // Predição Disponibilidade
-    let txPlatform = ct.forma_pagamento?.toUpperCase() || "";
-    if (pag) txPlatform = pag.plataforma.toUpperCase();
-    
-    let disponivelText = "—";
+
+    // ── Disponibilidade prediction (strict business rules) ────────────────────
+    let txPlatform = (ct.forma_pagamento || '').toUpperCase();
+    if (pag?.plataforma) txPlatform = pag.plataforma.toUpperCase();
+
+    let disponivelText = "\u2014";
     if (pag && pag.disponivel_em) {
+        // PAID: show the actual recorded date
         disponivelText = pag.disponivel_em.split('-').reverse().join('/');
-    } else if (!isPago && vencimentoStr) {
-        // Estimate based on rules
-        const d = new Date(vencimentoStr);
-        if (txPlatform.includes('STRIPE')) d.setDate(d.getDate() + 5);
-        else if (txPlatform.includes('IUGU')) d.setDate(d.getDate() + 1);
-        else d.setDate(d.getDate() + 0); // PIX
-        disponivelText = `~ ${d.toISOString().split('T')[0].split('-').reverse().join('/')}`;
+    } else if (!isPago && !isDeadDebt && vencimentoStr) {
+        // UNPAID + healthy (NORMAL/ATRASADO): estimate by platform
+        const refDate = new Date(vencimentoStr + 'T12:00:00');
+        if (txPlatform.includes('STRIPE')) {
+            refDate.setDate(refDate.getDate() + 5);
+        } else if (txPlatform.includes('IUGU')) {
+            let bizDays = 0;
+            while (bizDays < 3) {
+                refDate.setDate(refDate.getDate() + 1);
+                const dow = refDate.getDay();
+                if (dow !== 0 && dow !== 6) bizDays++;
+            }
+        }
+        // PIX = same day (no offset)
+        const iso = refDate.toISOString().split('T')[0];
+        disponivelText = `~ ${iso.split('-').reverse().join('/')}`;
     }
+    // Dead debts and pre-payment rows keep the default "—"
 
     const SectionTitle = ({ label, color }: { label: string, color: string }) => (
         <h3 className={`text-[10px] font-bold ${color} uppercase tracking-widest pl-1 mt-2 mb-1`}>{label}</h3>
@@ -390,15 +427,18 @@ function ParcelaDetailsModal({
                             <span className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">Status Op.</span>
                             <div className="mt-0.5">
                                 <span className={`px-2 py-0.5 rounded text-xs font-bold tracking-wider ${
-                                    isPago ? 'bg-[#34C759]/10 text-[#34C759]' : 
-                                    isSujo || parcelStatus === 'ATRASADO' ? 'bg-[#FF3B30]/10 text-[#FF3B30]' : 
+                                    isPago ? 'bg-[#34C759]/10 text-[#34C759]' :                            isDeadDebt || parcelStatus === 'ATRASADO' ? 'bg-[#FF3B30]/10 text-[#FF3B30]' : 
                                     'bg-[#ffa300]/10 text-[#ffa300]'
                                 }`}>{parcelStatus}</span>
                             </div>
                         </div>
                         <InfoBox label="Atraso (Dias)" value={daysLate > 0 && !isPago ? `${daysLate} dias` : '—'} highlight={daysLate > 0 && !isPago ? "text-[#FF3B30]" : "text-gray-500"} />
                         <InfoBox label="Forma Pagamento" value={ct.forma_pagamento || '—'} />
-                        <InfoBox label="Observação" value={data.observacao || pag?.observacao || '—'} highlight={(data.observacao || pag?.observacao) ? "text-gray-300 whitespace-pre-wrap max-h-20 overflow-y-auto" : "text-gray-500"} />
+                        <InfoBox label="Observação" value={data.observacao || '—'} highlight={data.observacao ? "text-gray-300 whitespace-pre-wrap max-h-20 overflow-y-auto" : "text-gray-500"} />
+                        {/* 1 */} <InfoBox label="Plano / Contrato" value={ct.tipo_contrato || '—'} />
+                        {/* 2 */} <InfoBox label="Fração da Parcela" value={data.numero_referencia && ct.parcelas_total ? `${data.numero_referencia} / ${ct.parcelas_total}` : '—'} />
+                        {/* 3 */} <InfoBox label="Ticket Mensal (Base)" value={brl(ct.valor_base_parcela)} />
+                        {/* 4 */} <InfoBox label="Valor Total (Contrato)" value={brl(ct.valor_total_contrato)} highlight="text-orange-400 font-mono font-bold" />
                     </div>
                 </div>
 
@@ -790,7 +830,7 @@ function RenovarModal({
     );
 }
 
-// ─── Main Component ───────────────────────────────────────────────────────────
+// ─── Main Component ──────────────────────────────────────────────────────
 export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
     const [isDetailsOpen, setIsDetailsOpen] = useState(false);
     const [isPaymentOpen, setIsPaymentOpen] = useState(false);
@@ -799,22 +839,60 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
     const [isDeleteOpen, setIsDeleteOpen] = useState(false);
     const [isRenewOpen, setIsRenewOpen] = useState(false);
     const [isNotRenewOpen, setIsNotRenewOpen] = useState(false);
-    const [localPago, setLocalPago] = useState(parcela.status_manual_override === "PAGO");
+    const [localPago, setLocalPago] = useState(
+        parcela.status_manual_override === "PAGO" ||
+        parcela.status_manual_override === "INADIMPLENTE RECEBIDO"
+    );
     const [mounted, setMounted] = useState(false);
 
     useEffect(() => setMounted(true), []);
 
+    const s = parcela.status_manual_override;
     const isPago = localPago;
-    const isNormal = parcela.status_manual_override === "NORMAL";
-    const showEditDelete = isNormal && !parcela.hasPagamento;
-    // Only root installments (sub_indice === null or 0) can be split
-    const showSplit = isNormal && (parcela.sub_indice === null || parcela.sub_indice === undefined || parcela.sub_indice === 0);
 
-    // Already paid
+    // ── Action availability groups ──────────────────────────────────────────
+    // FULL actions: NORMAL + ATRASADO (still collectible)
+    const isFullActionable = s === "NORMAL" || s === "ATRASADO";
+    // PARTIAL actions: in-default statuses can still receive payment
+    const isPartialActionable = s === "EM_INADIMPLENCIA" || s === "EM_PERDA_FATURAMENTO";
+    // VIEW ONLY: terminal dead-debt statuses
+    const isViewOnly = s === "INADIMPLENTE" || s === "PERDA DE FATURAMENTO";
+
+    // Edit/Delete only available for NORMAL installments with no payment
+    const showEditDelete = s === "NORMAL" && !parcela.hasPagamento;
+    // Only root installments (not sub_indice) can be split
+    const showSplit = s === "NORMAL" && (parcela.sub_indice === null || parcela.sub_indice === undefined || parcela.sub_indice === 0);
+
+    // ── Shared modals fragment ──────────────────────────────────────────────
+    const AllModals = (
+        <>
+            {mounted && isDetailsOpen && (
+                <ParcelaDetailsModal parcelaId={parcela.id} onClose={() => setIsDetailsOpen(false)} />
+            )}
+            {mounted && isPaymentOpen && (
+                <PaymentModal
+                    parcela={parcela}
+                    onClose={() => setIsPaymentOpen(false)}
+                    onSuccess={() => setLocalPago(true)}
+                />
+            )}
+            {mounted && isSplitOpen && (
+                <SplitModal parcela={parcela} onClose={() => setIsSplitOpen(false)} onSuccess={() => setIsSplitOpen(false)} />
+            )}
+            {mounted && isEditOpen && (
+                <EditParcelaModal parcela={parcela} onClose={() => setIsEditOpen(false)} />
+            )}
+            {mounted && isDeleteOpen && (
+                <DeleteParcelaModal parcela={parcela} onClose={() => setIsDeleteOpen(false)} />
+            )}
+        </>
+    );
+
+    // ── 1. ALREADY PAID ─────────────────────────────────────────────────────
     if (isPago) {
         return (
             <div className="flex flex-row items-center justify-end gap-1.5 w-full">
-                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-green-400/70 h-6 px-2.5">
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#34C759]/70 h-6 px-2.5">
                     <Check size={11} strokeWidth={2.5} />
                     Recebido
                 </span>
@@ -826,20 +904,16 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
                     <Eye size={11} strokeWidth={2} />
                 </button>
                 {mounted && isDetailsOpen && (
-                    <ParcelaDetailsModal
-                        parcelaId={parcela.id}
-                        onClose={() => setIsDetailsOpen(false)}
-                    />
+                    <ParcelaDetailsModal parcelaId={parcela.id} onClose={() => setIsDetailsOpen(false)} />
                 )}
             </div>
         );
     }
 
-    // RENOVAR CONTRATO — date-gated renewal / churn buttons
-    if (parcela.status_manual_override === "RENOVAR CONTRATO") {
+    // ── 2. RENOVAR CONTRATO ─────────────────────────────────────────────────
+    if (s === "RENOVAR CONTRATO") {
         const todayStr = new Date().toISOString().split("T")[0];
         const isLiberado = todayStr >= (parcela.data_vencimento || "2099-01-01");
-
         return (
             <>
                 <div className="flex flex-row items-center justify-end gap-1.5">
@@ -870,12 +944,16 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
         );
     }
 
-    // Not actionable statuses
-    if (!isNormal) {
+    // ── 3. VIEW-ONLY: terminal dead-debt statuses (INADIMPLENTE / PERDA DE FATURAMENTO) ──
+    if (isViewOnly) {
         return (
             <div className="flex flex-row items-center justify-end gap-1.5 w-full">
-                <span className="text-[11px] text-gray-600 font-medium h-6 px-2.5 inline-flex items-center">
-                    {parcela.status_manual_override}
+                <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-md whitespace-nowrap ${
+                    s === "PERDA DE FATURAMENTO"
+                        ? "bg-[#FF3B30]/10 text-[#FF3B30] border border-[#FF3B30]/20"
+                        : "bg-[#FF453A]/10 text-[#FF453A]"
+                }`}>
+                    {s === "PERDA DE FATURAMENTO" ? "Perda" : "Inadimplente"}
                 </span>
                 <button
                     onClick={() => setIsDetailsOpen(true)}
@@ -885,18 +963,53 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
                     <Eye size={11} strokeWidth={2} />
                 </button>
                 {mounted && isDetailsOpen && (
-                    <ParcelaDetailsModal
-                        parcelaId={parcela.id}
-                        onClose={() => setIsDetailsOpen(false)}
-                    />
+                    <ParcelaDetailsModal parcelaId={parcela.id} onClose={() => setIsDetailsOpen(false)} />
                 )}
             </div>
         );
     }
 
+    // ── 4. PARTIAL actions: EM_INADIMPLENCIA / EM_PERDA_FATURAMENTO ─────────
+    //    These are DB-synced states. Collection is still possible → show Baixa + Eye.
+    if (isPartialActionable) {
+        return (
+            <>
+                <div className="flex flex-row items-center justify-end gap-1.5 w-full">
+                    {/* Dar Baixa */}
+                    <button
+                        onClick={() => setIsPaymentOpen(true)}
+                        title="Registrar pagamento (cobrança em atraso)"
+                        className="inline-flex items-center justify-center h-6 px-2.5 gap-1 rounded-md bg-[#FF9500]/10 border border-[#FF9500]/20 hover:bg-[#FF9500]/20 hover:border-[#FF9500]/40 text-[#FF9500] text-[10px] font-semibold transition-all whitespace-nowrap"
+                    >
+                        <Check size={11} strokeWidth={2.5} />
+                        Baixa
+                    </button>
+                    {/* Ficha */}
+                    <button
+                        onClick={() => setIsDetailsOpen(true)}
+                        title="Ver Ficha da Parcela"
+                        className="inline-flex items-center justify-center h-6 px-2.5 rounded-md bg-blue-500/10 border border-blue-500/10 hover:bg-blue-500/20 hover:border-blue-500/30 text-blue-400 transition-all"
+                    >
+                        <Eye size={11} strokeWidth={2} />
+                    </button>
+                </div>
+                {mounted && isPaymentOpen && (
+                    <PaymentModal
+                        parcela={parcela}
+                        onClose={() => setIsPaymentOpen(false)}
+                        onSuccess={() => setLocalPago(true)}
+                    />
+                )}
+                {mounted && isDetailsOpen && (
+                    <ParcelaDetailsModal parcelaId={parcela.id} onClose={() => setIsDetailsOpen(false)} />
+                )}
+            </>
+        );
+    }
+
+    // ── 5. FULL actions: NORMAL + ATRASADO ──────────────────────────────────
     return (
         <>
-            {/* Action buttons — strictly side-by-side minimalist style */}
             <div className="flex flex-row items-center justify-end gap-1.5 w-full">
                 {/* Dar Baixa */}
                 <button
@@ -917,7 +1030,7 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
                     <Eye size={11} strokeWidth={2} />
                 </button>
 
-                {/* Dividir */}
+                {/* Dividir (split) */}
                 {showSplit && (
                     <button
                         onClick={() => setIsSplitOpen(true)}
@@ -928,7 +1041,7 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
                     </button>
                 )}
 
-                {/* Edit */}
+                {/* Editar */}
                 {showEditDelete && (
                     <button
                         onClick={() => setIsEditOpen(true)}
@@ -939,7 +1052,7 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
                     </button>
                 )}
 
-                {/* Delete */}
+                {/* Deletar */}
                 {showEditDelete && (
                     <button
                         onClick={() => setIsDeleteOpen(true)}
@@ -951,39 +1064,7 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
                 )}
             </div>
 
-            {/* Modals — portaled to document.body via Modal component */}
-            {mounted && isDetailsOpen && (
-                <ParcelaDetailsModal
-                    parcelaId={parcela.id}
-                    onClose={() => setIsDetailsOpen(false)}
-                />
-            )}
-            {mounted && isPaymentOpen && (
-                <PaymentModal
-                    parcela={parcela}
-                    onClose={() => setIsPaymentOpen(false)}
-                    onSuccess={() => setLocalPago(true)}
-                />
-            )}
-            {mounted && isSplitOpen && (
-                <SplitModal
-                    parcela={parcela}
-                    onClose={() => setIsSplitOpen(false)}
-                    onSuccess={() => setIsSplitOpen(false)}
-                />
-            )}
-            {mounted && isEditOpen && (
-                <EditParcelaModal
-                    parcela={parcela}
-                    onClose={() => setIsEditOpen(false)}
-                />
-            )}
-            {mounted && isDeleteOpen && (
-                <DeleteParcelaModal
-                    parcela={parcela}
-                    onClose={() => setIsDeleteOpen(false)}
-                />
-            )}
+            {AllModals}
         </>
     );
 }

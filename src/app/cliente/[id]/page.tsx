@@ -89,14 +89,14 @@ export default async function ClienteDetailPage({
         supabaseAdmin
             .from("clientes")
             .select(
-                `id, nome_cliente, empresa_label, cnpj_contrato, telefone, segmento, created_at,
+                `id, nome_cliente, empresa_label, telefone, segmento, created_at,
                  aniversario, pais, estado, cidade, link_asana, deleted_at,
                  contratos(
                    id, tipo_contrato, valor_total_contrato, parcelas_total, periodicidade, forma_pagamento,
                    cnpj_vinculado,
                    dim_agencias(nome), dim_equipe_sdr:dim_equipe!sdr_id(nome), dim_equipe_closer:dim_equipe!closer_id(nome),
                    dim_programas:dim_programas!programa_id(nome),
-                   parcelas(id, data_vencimento, valor_previsto, status_manual_override, observacao, tipo_parcela, numero_referencia, sub_indice, deleted_at, pagamentos(data_pagamento))
+                   parcelas(id, data_vencimento, valor_previsto, valor_bruto, status_manual_override, observacao, tipo_parcela, numero_referencia, sub_indice, deleted_at, pagamentos(data_pagamento))
                  )`
             )
             .eq("id", id)
@@ -166,6 +166,7 @@ export default async function ClienteDetailPage({
                 id: string;
                 data_vencimento: string;
                 valor_previsto: number;
+                valor_bruto: number | null;
                 status_manual_override: string;
                 observacao: string | null;
                 tipo_parcela: string | null;
@@ -216,6 +217,7 @@ export default async function ClienteDetailPage({
         id: string;
         data_vencimento: string;
         valor_previsto: number;
+        valor_bruto: number | null;
         status_manual_override: string;
         observacao: string | null;
         tipo_parcela: string | null;
@@ -541,7 +543,7 @@ export default async function ClienteDetailPage({
                                                 {/* Valor */}
                                                 <td className="px-6 py-3.5 text-right">
                                                     <span className={`text-sm font-semibold ${isDeleted ? "line-through text-red-400/60" : "text-white"}`}>
-                                                        {brl(p.valor_previsto)}
+                                                        {brl(p.valor_bruto ?? p.valor_previsto)}
                                                     </span>
                                                 </td>
 

@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { supabaseAdmin } from "@/lib/supabase";
 import { brl, fmtDate, daysLate, toDateStr } from "@/lib/utils";
+import { syncFinanceStatuses } from "@/lib/financeRules";
 import ParcelaActions, { type ParcelaForActions } from "@/components/ParcelaActions";
 import OperacoesToolbar from "@/components/OperacoesToolbar";
 
@@ -69,59 +70,69 @@ interface Row extends RawParcela {
     pagamento: RawPagamento | null;
 }
 
-// ─── Status Pill Minimalista (Apple Style) ────────────────────────────────────
+// ─── Status Pill — Strict Traffic-Light System ───────────────────────────────
 function StatusPill({ row }: { row: Row }) {
+    // Each status has a distinct, unambiguous color
     const map: Record<RowStatus, string> = {
-        PAGO: "text-[#34C759] bg-[#34C759]/10",
-        INADIMPLENTE: "text-[#FF3B30] bg-[#FF3B30]/10",
-        PERDA: "text-[#FF3B30] bg-[#FF3B30]/10",
-        EM_INADIMPLENCIA: "text-[#FF3B30] bg-[#FF3B30]/10",
-        ATRASADO: "text-amber-500 bg-amber-500/10",
-        VENCE_HOJE: "text-cyan-500 bg-cyan-500/10",
-        A_RECEBER: "text-gray-400 bg-gray-500/10",
+        PAGO:            "text-[#34C759]  bg-[#34C759]/10",
+        A_RECEBER:       "text-gray-400   bg-white/5",
+        VENCE_HOJE:      "text-[#028aa4]  bg-[#028aa4]/10",
+        ATRASADO:        "text-[#FF9500]  bg-[#FF9500]/10",
+        EM_INADIMPLENCIA:"text-[#FF453A]  bg-[#FF453A]/10",
+        INADIMPLENTE:    "text-[#FF453A]  bg-[#FF453A]/10",
+        PERDA:           "text-[#FF3B30]  bg-[#FF3B30]/20  border border-[#FF3B30]/30",
     };
     const labels: Record<RowStatus, string> = {
-        PAGO: "Pago",
-        INADIMPLENTE: "Inadimplente",
-        PERDA: "Perda",
-        EM_INADIMPLENCIA: "Inadimplência",
-        ATRASADO: "Atrasado",
-        VENCE_HOJE: "Vence Hoje",
-        A_RECEBER: "A Receber",
+        PAGO:            "Pago",
+        A_RECEBER:       "A Receber",
+        VENCE_HOJE:      "Vence Hoje",
+        ATRASADO:        "Atrasado",
+        EM_INADIMPLENCIA:"Inadimplência",
+        INADIMPLENTE:    "Inadimplente",
+        PERDA:           "Perda",
     };
+    // Show days overdue for ATRASADO
+    const suffix = row.rowStatus === "ATRASADO" && row.daysLateVal > 0
+        ? ` +${row.daysLateVal}d`
+        : "";
     return (
         <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[9px] font-semibold whitespace-nowrap ${map[row.rowStatus]}`}>
-            {labels[row.rowStatus]}
+            {labels[row.rowStatus]}{suffix}
         </span>
     );
 }
 
 function ClienteBadge({ status }: { status: string | null | undefined }) {
     if (!status) return <span className="text-gray-600">—</span>;
-    const ok = status === "ATIVO";
+    const colorMap: Record<string, string> = {
+        ATIVO:          "bg-[#34C759]/10 text-[#34C759]",
+        INADIMPLENTE:   "bg-[#FF453A]/10 text-[#FF453A]",
+        EM_INADIMPLENCIA:"bg-[#FF453A]/10 text-[#FF453A]",
+    };
+    const cls = colorMap[status] ?? "bg-white/5 text-gray-400";
     return (
-        <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[9px] font-semibold whitespace-nowrap ${ok ? "bg-[#34C759]/10 text-[#34C759]" : "bg-[#FF3B30]/10 text-[#FF3B30]"}`}>
+        <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[9px] font-semibold whitespace-nowrap ${cls}`}>
             {status}
         </span>
     );
 }
 
-// ─── KPI Card Minimalista ────────────────────────────────────────────────────
+// ─── KPI Card — Apple/Linear aesthetic ───────────────────────────────────────
 function KpiCard({ icon, label, value, color = "orange" }: { icon: React.ReactNode; label: string; value: string; color?: "orange" | "green" | "red" | "blue" | "gray"; }) {
     const textColors = {
         orange: "text-[#ffa300]",
-        green: "text-[#34C759]",
-        red: "text-[#FF3B30]",
-        blue: "text-blue-400",
-        gray: "text-gray-400",
+        green:  "text-[#34C759]",
+        red:    "text-[#FF453A]",
+        blue:   "text-[#028aa4]",
+        gray:   "text-gray-500",
     };
     return (
-        <div className="flex flex-col gap-1 rounded-2xl bg-[#1C1C1E] border border-white/5 px-5 py-4 flex-1 min-w-[140px]">
+        <div className="flex flex-col gap-1 rounded-2xl bg-[#0A0A0A] border border-white/[0.06] px-5 py-4 flex-1 min-w-[140px] hover:bg-[#111] transition-colors">
             <div className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest ${textColors[color]}`}>
                 {icon}
                 {label}
             </div>
-            <span className="text-xl font-bold leading-none text-white mt-2">{value}</span>
+            <span className="text-xl font-bold leading-none text-white mt-2 font-mono tabular-nums">{value}</span>
         </div>
     );
 }
@@ -159,6 +170,9 @@ export default async function OperacoesPage({ searchParams }: { searchParams: Pr
     const prevMonthUrl = buildMonthUrl(`${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}`);
     const nextMonthUrl = buildMonthUrl(`${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, "0")}`);
 
+    // ── Enforce Database Truth for Statuses ──
+    await syncFinanceStatuses(supabaseAdmin);
+
     const { data: rawData } = await supabaseAdmin
         .from("parcelas")
         .select(`
@@ -173,70 +187,23 @@ export default async function OperacoesPage({ searchParams }: { searchParams: Pr
 
     const allParcelas = (rawData ?? []) as unknown as RawParcela[];
     
-    // ── Global Contagion Rule (Cross-Month) ──
-    const fifteenDaysAgo = new Date();
-    fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 15);
-    const fifteenAgoStr = toDateStr(fifteenDaysAgo);
-
-    const { data: globalSujos } = await supabaseAdmin
-        .from("parcelas")
-        .select(`
-            contrato_id,
-            status_manual_override,
-            contratos ( clientes ( id, status_cliente ) )
-        `)
-        .is("deleted_at", null)
-        .or(`data_vencimento.lte.${fifteenAgoStr},status_manual_override.eq.INADIMPLENTE,status_manual_override.eq.PERDA DE FATURAMENTO`);
-
-    const inadimplentesSet = new Set<string>();
-    (globalSujos || []).forEach((row: any) => {
-        const s = row.status_manual_override || "";
-        const isPagoOuIgnorado = ["PAGO", "INADIMPLENTE RECEBIDO", "RENOVAR CONTRATO", "FINALIZAR PROJETO", "QUEBRA DE CONTRATO", "RENOVADO"].includes(s);
-        
-        const ct = row.contratos;
-        const clientId = ct?.clientes?.id;
-        const statusCli = ct?.clientes?.status_cliente;
-
-        if (!isPagoOuIgnorado) {
-            if (row.contrato_id) inadimplentesSet.add(row.contrato_id);
-            if (clientId) inadimplentesSet.add(clientId);
-        }
-
-        if (statusCli === "INADIMPLENTE" && clientId) {
-            inadimplentesSet.add(clientId);
-        }
-    });
-
     const classified: Row[] = allParcelas
         .filter((rowP) => !rowP.deleted_at && !(rowP.contratos as any)?.deleted_at && !(rowP.contratos as any)?.clientes?.deleted_at && !["RENOVAR CONTRATO", "FINALIZAR PROJETO", "QUEBRA DE CONTRATO", "RENOVADO"].includes(rowP.status_manual_override ?? ""))
         .map((rowP): Row => {
             const dl = daysLate(rowP.data_vencimento, todayStr);
-            const s = rowP.status_manual_override ?? "";
+            const s = rowP.status_manual_override ?? "A_RECEBER";
             const ct = rowP.contratos as any;
             const rawAgencia = ct?.dim_agencias;
             const agenciaNome: string | null = rawAgencia ? (Array.isArray(rawAgencia) ? (rawAgencia[0]?.nome ?? null) : (rawAgencia.nome ?? null)) : null;
             const pagamentoRaw = rowP.pagamentos;
             const pagamento: RawPagamento | null = Array.isArray(pagamentoRaw) ? (pagamentoRaw[0] ?? null) : (pagamentoRaw ?? null);
 
-            const isSujo = dl >= 15 || s === "INADIMPLENTE" || s === "PERDA DE FATURAMENTO";
-
             let rowStatus: RowStatus = "A_RECEBER";
             if (s === "PAGO" || s === "INADIMPLENTE RECEBIDO") rowStatus = "PAGO";
-            else if (isSujo) rowStatus = "INADIMPLENTE";
-            else if (dl > 0) rowStatus = "ATRASADO";
-            else if (rowP.data_vencimento === todayStr) rowStatus = "VENCE_HOJE";
-
-            const isContaminated = (rowP.contrato_id && inadimplentesSet.has(rowP.contrato_id)) || (ct?.clientes?.id && inadimplentesSet.has(ct.clientes.id));
-            if (rowStatus !== "PAGO" && rowStatus !== "INADIMPLENTE" && isContaminated) {
-                rowStatus = "EM_INADIMPLENCIA";
-            }
-
-            // The badge is always INADIMPLENTE red if the contract is dirty in any way
-            if (rowStatus === "INADIMPLENTE" || rowStatus === "EM_INADIMPLENCIA" || isContaminated) {
-                if (ct?.clientes) {
-                    ct.clientes.status_cliente = "INADIMPLENTE";
-                }
-            }
+            else if (s === "INADIMPLENTE" || s === "PERDA DE FATURAMENTO") rowStatus = "INADIMPLENTE";
+            else if (s === "EM_INADIMPLENCIA" || s === "EM_PERDA_FATURAMENTO") rowStatus = "EM_INADIMPLENCIA";
+            else if (s === "ATRASADO") rowStatus = "ATRASADO";
+            else if (s === "NORMAL" && rowP.data_vencimento === todayStr) rowStatus = "VENCE_HOJE";
 
             return { ...rowP, rowStatus, daysLateVal: Math.max(0, dl), agenciaNome, pagamento };
         });
@@ -269,8 +236,8 @@ export default async function OperacoesPage({ searchParams }: { searchParams: Pr
     const kpiTaxas = visible.reduce((s, r) => s + (r.pagamento?.taxa_gateway ?? 0), 0);
     const kpiAReceber = visible.filter(r => r.rowStatus !== "PAGO").reduce((s, r) => s + r.valor_previsto, 0);
 
-    const TH = "py-2 px-1 text-left text-[9px] font-semibold text-gray-500 uppercase tracking-widest truncate select-none";
-    const TD = "py-2 px-1 text-[10px] md:text-[11px] truncate whitespace-nowrap";
+    const TH = "py-2.5 px-1 text-left text-[9px] font-semibold text-gray-500 uppercase tracking-widest truncate select-none";
+    const TD = "py-2.5 px-1 text-[10px] md:text-[11px] truncate whitespace-nowrap";
 
     return (
         <div className="flex flex-col gap-6 max-w-[1600px] mx-auto pb-10">
@@ -351,7 +318,7 @@ export default async function OperacoesPage({ searchParams }: { searchParams: Pr
             </div>
 
             {/* Tabela Principal */}
-            <div className="rounded-2xl bg-[#1C1C1E] border border-white/5 shadow-2xl overflow-hidden mt-2 flex flex-col">
+            <div className="rounded-2xl bg-[#0A0A0A] border border-[#222] shadow-2xl overflow-hidden mt-2 flex flex-col">
                 <OperacoesToolbar
                     agencias={agencias}
                     categorias={categorias}
@@ -369,9 +336,9 @@ export default async function OperacoesPage({ searchParams }: { searchParams: Pr
                 ) : (
                     <div className="w-full">
                         <table className="w-full table-fixed text-left text-[10px] md:text-[11px]">
-                            <thead>
-                                <tr className="border-b border-white/5 bg-black/40">
-                                    <th className={`${TH} w-[7%] pl-4`}>Status Cliente</th>
+                            <thead className="sticky top-0 z-10 backdrop-blur-xl">
+                                <tr className="border-b border-[#222] bg-[#0A0A0A]/95">
+                                    <th className={`${TH} w-[7%] pl-4`}>Cliente</th>
                                     <th className={`${TH} w-[9%]`}>Categoria</th>
                                     <th className={`${TH} w-[18%]`}>Cliente / Empresa</th>
                                     <th className={`${TH} w-[8%]`}>Agência</th>
@@ -379,7 +346,7 @@ export default async function OperacoesPage({ searchParams }: { searchParams: Pr
                                     <th className={`${TH} w-[9%]`}>Status</th>
                                     <th className={`${TH} w-[5%]`}>Parcela</th>
                                     <th className={`${TH} w-[10%] text-right`}>Valor Bruto</th>
-                                    <th className={`${TH} w-[10%] text-right`}>Valor Recebido</th>
+                                    <th className={`${TH} w-[10%] text-right`}>Recebido</th>
                                     <th className={`${TH} w-[6%]`}>Plataforma</th>
                                     <th className={`${TH} w-[10%] text-right pr-4`}>Ação</th>
                                 </tr>
@@ -415,54 +382,123 @@ export default async function OperacoesPage({ searchParams }: { searchParams: Pr
                                     };
 
                                     return (
-                                        <tr key={row.id} className={`group transition-colors hover:bg-white/[0.02] ${isPago ? "opacity-50" : ""}`}>
-                                            <td className={`${TD} pl-4`}><ClienteBadge status={cliente?.status_cliente} /></td>
-                                            <td className={`${TD} text-gray-400 font-medium`}>{row.categoria ?? "—"}</td>
+                                        <tr
+                                            key={row.id}
+                                            className={`group transition-colors hover:bg-white/[0.025] border-b border-[#1a1a1a] last:border-0 ${
+                                                isPago ? "opacity-40 hover:opacity-60" : ""
+                                            }`}
+                                        >
+                                            {/* STATUS CLIENTE */}
+                                            <td className={`${TD} pl-4`}>
+                                                <ClienteBadge status={cliente?.status_cliente} />
+                                            </td>
+
+                                            {/* CATEGORIA */}
+                                            <td className={`${TD} text-gray-500 font-medium`}>
+                                                {row.categoria ?? "—"}
+                                            </td>
+
+                                            {/* CLIENTE / EMPRESA */}
                                             <td className={TD}>
                                                 {clienteId ? (
                                                     <div className="flex flex-col truncate pr-2">
-                                                        <Link href={`/cliente/${clienteId}`} className="font-medium text-white truncate hover:text-[#ffa300] transition-colors">
+                                                        <Link
+                                                            href={`/cliente/${clienteId}`}
+                                                            className="font-semibold text-white truncate hover:text-[#ffa300] transition-colors"
+                                                        >
                                                             {cliente?.nome_cliente ?? "—"}
                                                         </Link>
                                                         {(cliente?.empresa_label || linkAsana) && (
-                                                            <div className="flex items-center gap-1.5 text-[10px] text-gray-500">
+                                                            <div className="flex items-center gap-1.5 text-[10px] text-gray-600">
                                                                 <span className="truncate">{cliente?.empresa_label}</span>
                                                                 {linkAsana && (
-                                                                    <a href={linkAsana} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 shrink-0" title="Abrir no Asana">
+                                                                    <a
+                                                                        href={linkAsana}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className="text-blue-500 hover:text-blue-300 shrink-0"
+                                                                        title="Abrir no Asana"
+                                                                    >
                                                                         <ExternalLink size={9} />
                                                                     </a>
                                                                 )}
                                                             </div>
                                                         )}
                                                         {!cliente?.empresa_label && linkAsana && (
-                                                            <a href={linkAsana} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 text-[9px] text-purple-500 hover:text-purple-300 transition-colors mt-0.5" title="Abrir no Asana">
+                                                            <a
+                                                                href={linkAsana}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="inline-flex items-center gap-0.5 text-[9px] text-purple-500 hover:text-purple-300 transition-colors mt-0.5"
+                                                                title="Abrir no Asana"
+                                                            >
                                                                 <ExternalLink size={8} /> Asana
                                                             </a>
                                                         )}
                                                     </div>
-                                                ) : <span className="text-gray-500 truncate">Desconhecido</span>}
+                                                ) : (
+                                                    <span className="text-gray-600 truncate">Desconhecido</span>
+                                                )}
                                             </td>
-                                            <td className={`${TD} text-gray-400 truncate pr-2`}>{row.agenciaNome ?? "—"}</td>
-                                            <td className={`${TD} font-mono ${isPago ? "text-gray-500" : "text-gray-300"}`}>{fmtDate(row.data_vencimento)}</td>
-                                            <td className={TD}><StatusPill row={row} /></td>
-                                            <td className={`${TD} font-mono text-gray-500`}>{parcelaRef}</td>
-                                            <td className={`${TD} text-right font-mono font-medium text-white`}>{brl(row.valor_bruto ?? row.valor_previsto)}</td>
-                                            <td className={`${TD} text-right font-mono font-medium ${isPago ? "text-[#34C759]" : "text-gray-600"}`}>{isPago ? brl(row.pagamento?.valor_pago || 0) : "—"}</td>
-                                            <td className={`${TD} text-gray-500 text-[9px] uppercase tracking-wider truncate`}>{isPago ? row.pagamento?.plataforma : "—"}</td>
-                                            <td className={`${TD} text-right pr-4 overflow-visible`}><ParcelaActions parcela={parcelaData} /></td>
+
+                                            {/* AGÊNCIA */}
+                                            <td className={`${TD} text-gray-500 truncate pr-2`}>
+                                                {row.agenciaNome ?? "—"}
+                                            </td>
+
+                                            {/* VENCIMENTO */}
+                                            <td className={`${TD} font-mono tabular-nums ${
+                                                isPago ? "text-gray-600" : "text-gray-300"
+                                            }`}>
+                                                {fmtDate(row.data_vencimento)}
+                                            </td>
+
+                                            {/* STATUS BADGE */}
+                                            <td className={TD}>
+                                                <StatusPill row={row} />
+                                            </td>
+
+                                            {/* PARCELA FRAÇÃO */}
+                                            <td className={`${TD} font-mono tabular-nums text-gray-600`}>
+                                                {parcelaRef}
+                                            </td>
+
+                                            {/* VALOR BRUTO */}
+                                            <td className={`${TD} text-right font-mono tabular-nums font-medium text-white`}>
+                                                {brl(row.valor_bruto ?? row.valor_previsto)}
+                                            </td>
+
+                                            {/* VALOR RECEBIDO */}
+                                            <td className={`${TD} text-right font-mono tabular-nums font-medium ${
+                                                isPago ? "text-[#34C759]" : "text-gray-700"
+                                            }`}>
+                                                {isPago ? brl(row.pagamento?.valor_pago ?? 0) : "—"}
+                                            </td>
+
+                                            {/* PLATAFORMA — shows actual payment platform or dash */}
+                                            <td className={`${TD} text-[9px] uppercase tracking-wider truncate ${
+                                                isPago && row.pagamento?.plataforma ? "text-gray-400" : "text-gray-700"
+                                            }`}>
+                                                {isPago ? (row.pagamento?.plataforma ?? "—") : "—"}
+                                            </td>
+
+                                            {/* AÇÃO */}
+                                            <td className={`${TD} text-right pr-4 overflow-visible`}>
+                                                <ParcelaActions parcela={parcelaData} />
+                                            </td>
                                         </tr>
                                     );
                                 })}
                             </tbody>
                             <tfoot>
-                                <tr className="border-t border-white/5 bg-black/20">
-                                    <td colSpan={7} className="pl-4 py-3 text-[10px] text-gray-500 uppercase tracking-widest font-bold">
-                                        Total Filtro ({visible.length})
+                                <tr className="border-t border-[#222] bg-[#050505]">
+                                    <td colSpan={7} className="pl-4 py-3 text-[10px] text-gray-600 uppercase tracking-widest font-bold">
+                                        Total do filtro &middot; {visible.length} parcelas
                                     </td>
-                                    <td className="px-1 py-3 text-right font-mono font-bold text-white text-[11px]">
+                                    <td className="px-1 py-3 text-right font-mono tabular-nums font-bold text-white text-[11px]">
                                         {brl(kpiTotalPrevisto)}
                                     </td>
-                                    <td className="px-1 py-3 text-right font-mono font-bold text-[#34C759] text-[11px]">
+                                    <td className="px-1 py-3 text-right font-mono tabular-nums font-bold text-[#34C759] text-[11px]">
                                         {kpiFaturadoLiquido > 0 ? brl(kpiFaturadoLiquido) : "—"}
                                     </td>
                                     <td colSpan={2} />

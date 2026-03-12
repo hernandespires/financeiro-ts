@@ -38,7 +38,8 @@ export async function registrarPagamentoCompleto(
     dataPagamento: string,    // "YYYY-MM-DD"
     plataforma: string,       // e.g. "PIX", "IUGU", "STRIPE BRASIL", "STRIPE EUA"
     observacao?: string,
-    anexoUrl?: string         // URL of the uploaded receipt
+    anexoUrl?: string,        // URL of the uploaded receipt
+    novoValorBruto?: number   // (Optional) Updated valor_bruto if juros was added
 ): Promise<ActionResult> {
     try {
         await requireAuth();
@@ -68,14 +69,20 @@ export async function registrarPagamentoCompleto(
         const disponivelEmReal = calcularDataDisponibilidade(dataPagamento, plataforma);
 
         // ── Step 3: Mark parcela as PAGO + fix its availability date ─────────────
+        const updatePayload: any = {
+            status_manual_override: 'PAGO',
+            observacao: observacao || null,
+            data_disponibilidade_prevista: disponivelEmReal,
+            juros_aplicado: jurosAplicado || null,
+        };
+
+        if (novoValorBruto !== undefined) {
+            updatePayload.valor_bruto = novoValorBruto;
+        }
+
         const { error: updateError } = await supabaseAdmin
             .from('parcelas')
-            .update({
-                status_manual_override: 'PAGO' as any,
-                observacao: observacao || null,
-                data_disponibilidade_prevista: disponivelEmReal,
-                juros_aplicado: jurosAplicado || null,
-            })
+            .update(updatePayload)
             .eq('id', parcelaId);
 
         if (updateError) {

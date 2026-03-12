@@ -41,7 +41,7 @@ export async function editarValorContrato(
         // 2. Fetch current contract (valor_total_contrato is a runtime column, not in generated types)
         const { data: contratoRaw, error: contractErr } = await supabaseAdmin
             .from('contratos')
-            .select('cliente_id, valor_total_contrato')
+            .select('cliente_id, valor_total_contrato, imposto_percentual')
             .eq('id', contratoId)
             .single();
 
@@ -49,8 +49,9 @@ export async function editarValorContrato(
             return { ok: false, error: contractErr?.message ?? 'Contrato não encontrado.' };
         }
 
-        const contrato = contratoRaw as { cliente_id: string; valor_total_contrato: number };
+        const contrato = contratoRaw as { cliente_id: string; valor_total_contrato: number; imposto_percentual: number };
         const oldValorTotal = parseFloat(String(contrato.valor_total_contrato ?? 0));
+        const imposto = parseFloat(String(contrato.imposto_percentual ?? 0));
         const clienteId: string = contrato.cliente_id;
 
         // Short-circuit: no meaningful change
@@ -61,7 +62,7 @@ export async function editarValorContrato(
         // 3. Fetch all active (non-deleted) installments for this contract
         const { data: parcelas, error: parcErr } = await supabaseAdmin
             .from('parcelas')
-            .select('id, valor_previsto, status_manual_override')
+            .select('id, valor_bruto, valor_previsto, status_manual_override')
             .eq('contrato_id', contratoId)
             .is('deleted_at', null);
 
@@ -73,8 +74,8 @@ export async function editarValorContrato(
         const pagas = parcelas.filter(p => p.status_manual_override === 'PAGO');
         const abertas = parcelas.filter(p => p.status_manual_override === 'NORMAL');
 
-        const totalPago = parseFloat(
-            pagas.reduce((sum, p) => sum + (p.valor_previsto ?? 0), 0).toFixed(2)
+        const totalBrutoPago = parseFloat(
+            pagas.reduce((sum, p) => sum + (p.valor_bruto ?? p.valor_previsto ?? 0), 0).toFixed(2)
         );
         const quantidadeAberta = abertas.length;
 
@@ -94,32 +95,36 @@ export async function editarValorContrato(
             logExtra = 'Nenhuma parcela em aberto para reajustar.';
         } else {
             // 6. Financial redistribution math
-            const saldoRestante = parseFloat((novoValorTotal - totalPago).toFixed(2));
-            const novoValorParcela = parseFloat((saldoRestante / quantidadeAberta).toFixed(2));
+            const saldoRestanteBruto = parseFloat((novoValorTotal - totalBrutoPago).toFixed(2));
+            const novoValorParcelaBruto = parseFloat((saldoRestanteBruto / quantidadeAberta).toFixed(2));
+            const novoValorParcelaLiquido = parseFloat((novoValorParcelaBruto * (1 - (imposto / 100))).toFixed(2));
 
             // Strict NaN / negative guard before any DB write
-            if (isNaN(novoValorParcela) || !isFinite(novoValorParcela)) {
+            if (isNaN(novoValorParcelaBruto) || !isFinite(novoValorParcelaBruto)) {
                 return { ok: false, error: 'Cálculo do novo valor de parcela resultou em NaN. Verifique os dados.' };
             }
-            if (novoValorParcela < 0) {
+            if (novoValorParcelaBruto < 0) {
                 return {
                     ok: false,
-                    error: `Saldo restante insuficiente (${brlFmt(saldoRestante)}) para cobrir ${quantidadeAberta} parcela(s). `
-                        + `O novo total deve ser superior ao valor já pago (${brlFmt(totalPago)}).`,
+                    error: `Saldo restante insuficiente (${brlFmt(saldoRestanteBruto)}) para cobrir ${quantidadeAberta} parcela(s). `
+                        + `O novo total deve ser superior ao valor já pago (${brlFmt(totalBrutoPago)}).`,
                 };
             }
 
             // 7. Batch-update all open installments
             const { error: updateParcErr } = await supabaseAdmin
                 .from('parcelas')
-                .update({ valor_previsto: novoValorParcela })
+                .update({ 
+                    valor_bruto: novoValorParcelaBruto,
+                    valor_previsto: novoValorParcelaLiquido 
+                })
                 .in('id', abertas.map(p => p.id));
 
             if (updateParcErr) {
                 return { ok: false, error: `Falha ao atualizar parcelas: ${updateParcErr.message}` };
             }
 
-            logExtra = `${quantidadeAberta} parcela(s) em aberto reajustadas para ${brlFmt(novoValorParcela)} cada.`;
+            logExtra = `${quantidadeAberta} parcela(s) em aberto reajustadas para ${brlFmt(novoValorParcelaBruto)} cada.`;
         }
 
         // 8. Detailed audit log
