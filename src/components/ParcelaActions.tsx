@@ -63,18 +63,26 @@ function PaymentModal({
     const brutoOriginal = parcela.valor_bruto ?? parcela.valor_previsto ?? 0;
 
     let initialJuros = 0;
+    let daysLate = 0;
     if (parcela.data_vencimento) {
         const todayStr = new Date().toISOString().split("T")[0];
         if (todayStr > parcela.data_vencimento) {
             const t1 = new Date(parcela.data_vencimento).getTime();
             const t2 = new Date(todayStr).getTime();
-            const daysLate = Math.floor((t2 - t1) / (1000 * 3600 * 24));
+            daysLate = Math.floor((t2 - t1) / (1000 * 3600 * 24));
             if (daysLate >= 10) {
                 const mesesAtraso = Math.ceil(daysLate / 30);
                 initialJuros = brutoOriginal * 0.015 * mesesAtraso;
             }
         }
     }
+
+    const statusText =
+        ["PERDA DE FATURAMENTO", "EM_PERDA_FATURAMENTO"].includes(parcela.status_manual_override)
+            ? "Fatura em Perda de Faturamento"
+            : ["INADIMPLENTE", "EM_INADIMPLENCIA"].includes(parcela.status_manual_override)
+            ? "Fatura Inadimplente"
+            : "Fatura Atrasada";
 
     const [jurosCalculado] = useState(initialJuros);
     const [cobrarJuros, setCobrarJuros] = useState(false);
@@ -87,9 +95,15 @@ function PaymentModal({
     const [plataforma, setPlataforma] = useState(parcela.forma_pagamento_contrato || 'PIX');
     const [observacao, setObservacao] = useState(parcela.observacao || '');
 
-    useEffect(() => {
-        setValorPlataforma(expectedBruto.toFixed(2));
-    }, [expectedBruto]);
+    function handleToggleJuros(checked: boolean) {
+        const current = parseFloat(valorPlataforma) || 0;
+        if (checked) {
+            setValorPlataforma((current + jurosCalculado).toFixed(2));
+        } else {
+            setValorPlataforma(Math.max(0, current - jurosCalculado).toFixed(2));
+        }
+        setCobrarJuros(checked);
+    }
 
     // Drag & Drop state
     const [file, setFile] = useState<File | null>(null);
@@ -205,14 +219,14 @@ function PaymentModal({
                         <div className="flex items-center gap-2 text-[#FF3B30]">
                             <AlertTriangle size={16} />
                             <span className="text-sm font-semibold">
-                                Esta parcela está atrasada. Juros acumulado: {brl(jurosCalculado)}
+                                {statusText} ({daysLate} dias). Juros acumulado: {brl(jurosCalculado)}
                             </span>
                         </div>
                         <label className="flex items-center gap-2 cursor-pointer mt-1">
                             <input
                                 type="checkbox"
                                 checked={cobrarJuros}
-                                onChange={(e) => setCobrarJuros(e.target.checked)}
+                                onChange={(e) => handleToggleJuros(e.target.checked)}
                                 className="w-4 h-4 rounded border-white/20 bg-black/50 text-[#ffa300] focus:ring-[#ffa300]/30"
                             />
                             <span className="text-xs text-gray-300">Cobrar e adicionar juros ao valor bruto da parcela?</span>
@@ -865,6 +879,36 @@ function RenovarModal({
     );
 }
 
+// ─── Block Payment Modal ──────────────────────────────────────────────────────
+function BlockPaymentModal({
+    status,
+    onClose,
+}: {
+    status: string;
+    onClose: () => void;
+}) {
+    return (
+        <Modal
+            onClose={onClose}
+            title="Baixa Bloqueada"
+            subtitle="Regra de Contágio Financeiro"
+            icon={<AlertTriangle size={18} className="text-red-400" />}
+        >
+            <div className="rounded-xl bg-red-500/5 border border-red-500/20 p-4">
+                <p className="text-sm text-gray-300 leading-relaxed">
+                    Esta fatura está classificada como{" "}
+                    <strong className="text-red-400">{status}</strong>. Para manter a integridade
+                    da operação, o sistema exige que você regularize primeiro as faturas mais
+                    antigas deste cliente antes de dar baixa nesta.
+                </p>
+            </div>
+            <div className="flex justify-end mt-4">
+                <Button variant="outline" onClick={onClose}>Entendido</Button>
+            </div>
+        </Modal>
+    );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
     const [isDetailsOpen, setIsDetailsOpen] = useState(false);
@@ -874,6 +918,7 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
     const [isDeleteOpen, setIsDeleteOpen] = useState(false);
     const [isRenewOpen, setIsRenewOpen] = useState(false);
     const [isNotRenewOpen, setIsNotRenewOpen] = useState(false);
+    const [isBlockOpen, setIsBlockOpen] = useState(false);
     const [localPago, setLocalPago] = useState(
         parcela.status_manual_override === "PAGO" ||
         parcela.status_manual_override === "INADIMPLENTE RECEBIDO"
@@ -907,6 +952,7 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
             {mounted && isSplitOpen && <SplitModal parcela={parcela} onClose={() => setIsSplitOpen(false)} onSuccess={() => setIsSplitOpen(false)} />}
             {mounted && isEditOpen && <EditParcelaModal parcela={parcela} onClose={() => setIsEditOpen(false)} />}
             {mounted && isDeleteOpen && <DeleteParcelaModal parcela={parcela} onClose={() => setIsDeleteOpen(false)} />}
+            {mounted && isBlockOpen && <BlockPaymentModal status={s} onClose={() => setIsBlockOpen(false)} />}
         </>
     );
 
@@ -942,7 +988,7 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
         return (
             <div className="flex flex-row gap-2.5 w-full flex-nowrap">
                 {/* Baixa — ALWAYS GREEN */}
-                <button onClick={() => setIsPaymentOpen(true)} title="Dar Baixa" className={`h-8 px-3 flex items-center justify-center gap-1.5 rounded-lg bg-[#34C759]/10 border border-[#34C759]/30 text-[#34C759] hover:bg-[#34C759]/20 hover:scale-105 shadow-[0_0_12px_rgba(52,199,89,0.15)] transition-all shrink-0`}>
+                <button onClick={() => { if (s === "EM_INADIMPLENCIA" || s === "EM_PERDA_FATURAMENTO") { setIsBlockOpen(true); } else { setIsPaymentOpen(true); } }} title="Dar Baixa" className={`h-8 px-3 flex items-center justify-center gap-1.5 rounded-lg bg-[#34C759]/10 border border-[#34C759]/30 text-[#34C759] hover:bg-[#34C759]/20 hover:scale-105 shadow-[0_0_12px_rgba(52,199,89,0.15)] transition-all shrink-0`}>
                     <Check size={15} strokeWidth={3} />
                 </button>
 
