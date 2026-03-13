@@ -8,9 +8,10 @@ import ParcelaActions from "@/components/ParcelaActions";
 import CommentForm from "@/components/CommentForm";
 import RiskBadge, { riskConfig, RiskStatus } from "@/components/RiskBadge";
 import ClienteActions from "@/components/ClienteActions";
-import RestaurarParcelaBtn from "@/components/RestaurarParcelaBtn";
+import RestaurarParcelaButton from "@/components/RestaurarParcelaButton";
+import QuebraContratoButton from "@/components/QuebraContratoButton";
 import { brl, toDateStr, daysLate, fmtDate } from "@/lib/utils";
-import { getRiskStatus } from "@/lib/financeRules";
+import { getRiskStatus, STATUS_PARCELA, canAplicarQuebraContrato, calcularExtratoQuebraContrato } from "@/lib/financeRules";
 
 
 // ─── Parcel status badge ──────────────────────────────────────────────────────
@@ -23,7 +24,7 @@ function ParcelBadge({
     dueDate: string;
     todayStr: string;
 }) {
-    if (status === "PAGO") {
+    if (status === STATUS_PARCELA.PAGO || status === STATUS_PARCELA.INADIMPLENTE_RECEBIDO) {
         return (
             <span className="inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide bg-green-500/10 text-green-400 border border-green-500/20">
                 PAGO
@@ -31,7 +32,7 @@ function ParcelBadge({
         );
     }
 
-    if (status === "RENOVAR CONTRATO") {
+    if (status === STATUS_PARCELA.RENOVAR_CONTRATO) {
         return (
             <span className="inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide bg-purple-500/10 text-purple-400 border border-purple-500/20">
                 RENOVAR
@@ -80,16 +81,14 @@ export default async function ClienteDetailPage({
     const { data: { user } } = await supabaseSSR.auth.getUser();
     if (!user) redirect('/login');
 
-    const { data: dbUser } = await supabaseAdmin
-        .from('usuarios').select('cargo').eq('id', user.id).single();
-    const isAdmin = dbUser?.cargo === 'ADMIN' || dbUser?.cargo === 'DIRETOR';
-
-    // ── Parallel Fetch ────────────────────────────────────────────────────────
-    const [clientRes, comentariosRes, logsRes] = await Promise.all([
+    // ── Parallel Fetch (merge auth + data into one round-trip) ───────────────
+    const [dbUserRes, clientRes, comentariosRes, logsRes] = await Promise.all([
+        supabaseAdmin.from('usuarios').select('cargo').eq('id', user.id).single(),
         supabaseAdmin
             .from("clientes")
             .select(
                 `id, nome_cliente, empresa_label, telefone, segmento, created_at,
+                 status_cliente,
                  aniversario, pais, estado, cidade, link_asana, deleted_at,
                  contratos(
                    id, tipo_contrato, valor_total_contrato, parcelas_total, periodicidade, forma_pagamento,
@@ -101,17 +100,15 @@ export default async function ClienteDetailPage({
             )
             .eq("id", id)
             .single(),
-        supabaseAdmin
-            .from('comentarios_clientes')
-            .select('*, usuarios(nome, avatar_url, cargo)')
-            .eq('cliente_id', id)
-            .order('created_at', { ascending: false }),
-        supabaseAdmin
-            .from('atividades_log')
-            .select('*')
-            .eq('registro_id', id)
-            .order('created_at', { ascending: false }),
+        // Only fetch CRM data when needed — saves 2 DB hops on financial tab
+        activeTab === 'crm'
+            ? supabaseAdmin.from('comentarios_clientes').select('*, usuarios(nome, avatar_url, cargo)').eq('cliente_id', id).order('created_at', { ascending: false })
+            : Promise.resolve({ data: [], error: null }),
+        activeTab === 'crm'
+            ? supabaseAdmin.from('atividades_log').select('*').eq('registro_id', id).order('created_at', { ascending: false })
+            : Promise.resolve({ data: [], error: null }),
     ]);
+    const isAdmin = dbUserRes.data?.cargo === 'ADMIN' || dbUserRes.data?.cargo === 'DIRETOR';
 
     if (clientRes.error || !clientRes.data) {
         console.error("[ClienteDetail] error:", clientRes.error?.message);
@@ -144,6 +141,7 @@ export default async function ClienteDetailPage({
         telefone: string | null;
         segmento: string | null;
         created_at: string;
+        status_cliente: string | null;
         aniversario: string | null;
         pais: string | null;
         estado: string | null;
@@ -194,16 +192,21 @@ export default async function ClienteDetailPage({
     const programaFechado = extractName(primeiroContrato?.dim_programas);
 
     // ── Cross-default risk ────────────────────────────────────────────────────
+    const OPEN_STATUSES = new Set([
+        "NORMAL", "ATRASADO", "INADIMPLENTE", "PERDA DE FATURAMENTO",
+        "POSSUI INADIMPLENCIA", "POSSUI PERDA",
+    ]);
     const openParcelas = contratos.flatMap((ct) =>
-        (ct.parcelas ?? []).filter((p) => p.status_manual_override === "NORMAL")
+        (ct.parcelas ?? []).filter((p) => !p.deleted_at && OPEN_STATUSES.has(p.status_manual_override))
     );
 
     let riskStatus: RiskStatus = "CONCLUÍDO";
-    if (openParcelas.length > 0) {
+    if (cliente.status_cliente === "QUEBRA DE CONTRATO") {
+        riskStatus = "INADIMPLENTE"; // closest visual match; quebra button will show prominently
+    } else if (openParcelas.length > 0) {
         const maxLate = Math.max(
             ...openParcelas.map((p) => daysLate(p.data_vencimento, todayStr))
         );
-        // Use central brain — matches financeRules thresholds exactly
         riskStatus = getRiskStatus(maxLate) as RiskStatus;
     }
 
@@ -211,6 +214,29 @@ export default async function ClienteDetailPage({
     const valorTotalAtivo = contratos.reduce(
         (s, ct) => s + (ct.valor_total_contrato ?? 0), 0
     );
+
+    // ── Quebra de Contrato — extrato & button visibility ─────────────────────
+    const jaQuebraContrato = cliente.status_cliente === "QUEBRA DE CONTRATO";
+    const { allowed: canQuebrar } = canAplicarQuebraContrato(cliente.status_cliente ?? "");
+
+    const quebraParcelas = jaQuebraContrato
+        ? contratos.flatMap((ct) =>
+            (ct.parcelas ?? []).filter(
+                (p) => !p.deleted_at && p.status_manual_override === STATUS_PARCELA.QUEBRA_CONTRATO
+            )
+          )
+        : contratos.flatMap((ct) =>
+            (ct.parcelas ?? []).filter(
+                (p) => !p.deleted_at && [
+                    STATUS_PARCELA.INADIMPLENTE, STATUS_PARCELA.PERDA_FATURAMENTO,
+                    STATUS_PARCELA.POSSUI_INADIMPLENCIA, STATUS_PARCELA.POSSUI_PERDA,
+                ].includes(p.status_manual_override as any)
+            )
+          );
+
+    const extrato = (jaQuebraContrato || canQuebrar) && quebraParcelas.length > 0
+        ? calcularExtratoQuebraContrato(quebraParcelas, todayStr)
+        : null;
 
     // ── Flat sorted parcel list with index info ───────────────────────────────
     type FlatParcela = {
@@ -285,6 +311,11 @@ export default async function ClienteDetailPage({
                     <ChevronLeft size={14} />
                     Voltar para clientes
                 </Link>
+                <QuebraContratoButton
+                    clienteId={cliente.id}
+                    statusCliente={cliente.status_cliente}
+                    extrato={extrato}
+                />
                 <ClienteActions
                     clienteId={cliente.id}
                     isAdmin={isAdmin}
@@ -439,6 +470,17 @@ export default async function ClienteDetailPage({
                     )}
                 </div>
 
+                {activeTab === 'financeiro' && jaQuebraContrato && extrato && (
+                    <div className="p-6 border-b border-white/5">
+                        <QuebraContratoButton
+                            clienteId={cliente.id}
+                            statusCliente={cliente.status_cliente}
+                            extrato={extrato}
+                            jaQuebraContrato
+                        />
+                    </div>
+                )}
+
                 {activeTab === 'financeiro' && (
                     <div className="overflow-x-auto">
                         <table className="w-full">
@@ -565,7 +607,7 @@ export default async function ClienteDetailPage({
                                                 {/* Action — disabled for deleted rows */}
                                                 <td className="px-6 py-3.5 text-center">
                                                     {isDeleted ? (
-                                                        <RestaurarParcelaBtn parcelaId={p.id} />
+                                                        <RestaurarParcelaButton parcelaId={p.id} />
                                                     ) : (
                                                         <ParcelaActions parcela={{
                                                             id: p.id,

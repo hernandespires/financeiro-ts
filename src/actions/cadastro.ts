@@ -1,7 +1,7 @@
 'use server'
 
 import { supabaseAdmin } from '../lib/supabase';
-import { calcularDataDisponibilidade } from '../lib/utils';
+import { calcularDataDisponibilidade } from '../lib/financeRules';
 import { requireAuth } from '../lib/authGuard';
 
 export type TipoCadastro = 'RECORRENTE' | 'A_VISTA' | 'PONTUAL' | 'ANTIGO';

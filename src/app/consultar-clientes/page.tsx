@@ -2,14 +2,14 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
-import { Plus, ChevronRight, SlidersHorizontal, X } from "lucide-react";
+import { Plus, ChevronRight, SlidersHorizontal, X, CheckCircle2, Clock, AlertCircle, ShieldAlert } from "lucide-react";
 import { supabaseAdmin } from "@/lib/supabase";
-import KpiCard from "@/components/KpiCard";
 import ClientSearchInput from "@/components/ClientSearchInput";
 import { getRiskStatus } from "@/lib/financeRules";
+import { brl, toDateStr, daysLate, fmtDate } from "@/lib/utils";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
-type ClientStatus = "EM DIA" | "ATRASO" | "INADIMPLENTE" | "PERDA" | "CONCLUÍDO";
+type ClientStatus = "EM DIA" | "ATRASO" | "INADIMPLENTE" | "PERDA" | "CONCLUÍDO" | "QUEBRA";
 
 interface ProcessedClient {
     id: string;
@@ -22,25 +22,6 @@ interface ProcessedClient {
     deletedAt: string | null;
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-const brl = (v: number) =>
-    new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
-
-const toDateStr = (d: Date): string =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-
-const daysLate = (dueDateStr: string, todayStr: string): number => {
-    const due = new Date(dueDateStr + "T00:00:00");
-    const tod = new Date(todayStr + "T00:00:00");
-    return Math.round((tod.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
-};
-
-const fmtDate = (iso: string | null): string => {
-    if (!iso) return "—";
-    const [y, m, d] = iso.split("-");
-    return `${d}/${m}/${y}`;
-};
-
 // ─── Status badge style map ───────────────────────────────────────────────────
 const statusStyle: Record<ClientStatus, string> = {
     "EM DIA": "bg-green-500/10 text-green-400 border border-green-500/20",
@@ -48,6 +29,7 @@ const statusStyle: Record<ClientStatus, string> = {
     "INADIMPLENTE": "bg-red-500/10 text-red-400 border border-red-500/20",
     "PERDA": "bg-red-900/20 text-red-600 border border-red-700/30",
     "CONCLUÍDO": "bg-gray-500/10 text-gray-400 border border-gray-500/20",
+    "QUEBRA": "bg-red-900/30 text-red-400 border border-red-700/40",
 };
 
 // ─── Page ────────────────────────────────────────────────────────────────────
@@ -80,7 +62,7 @@ export default async function ConsultarClientesPage({
     let query = supabaseAdmin
         .from("clientes")
         .select(
-            "id, nome_cliente, empresa_label, deleted_at, contratos(id, tipo_contrato, valor_total_contrato, parcelas(data_vencimento, status_manual_override, valor_previsto))"
+            "id, nome_cliente, empresa_label, status_cliente, deleted_at, contratos(id, tipo_contrato, valor_total_contrato, parcelas(data_vencimento, status_manual_override, valor_previsto))"
         )
         .order("nome_cliente", { ascending: true });
 
@@ -100,7 +82,9 @@ export default async function ConsultarClientesPage({
 
     const allClients: ProcessedClient[] = (clientsData ?? []).map(
         (c: RawCliente) => {
-            const contratos = (c.contratos as {
+            const statusCliente = (c as any).status_cliente as string | null;
+
+        const contratos = (c.contratos as {
                 id: string;
                 tipo_contrato: string | null;
                 valor_total_contrato: number;
@@ -111,46 +95,61 @@ export default async function ConsultarClientesPage({
                 }[];
             }[]) ?? [];
 
-            // Flat list of open parcels across ALL contracts
-            const openParcelas = contratos.flatMap((ct) =>
-                (ct.parcelas ?? []).filter(
-                    (p) => p.status_manual_override === "NORMAL"
-                )
-            );
-
-            // Cross-default: worst delay across all open parcels
+            // If client has a manual terminal status, use it directly
             let status: ClientStatus = "CONCLUÍDO";
-            if (openParcelas.length > 0) {
-                const maxLate = Math.max(
-                    ...openParcelas.map((p) => daysLate(p.data_vencimento, todayStr))
+            if (statusCliente === "QUEBRA DE CONTRATO") {
+                status = "QUEBRA";
+            } else {
+                // Flat list of open parcels across ALL contracts (all non-terminal statuses)
+                const OPEN_STATUSES = new Set([
+                    "NORMAL", "ATRASADO", "INADIMPLENTE", "PERDA DE FATURAMENTO",
+                    "POSSUI INADIMPLENCIA", "POSSUI PERDA",
+                ]);
+                const openParcelas = contratos.flatMap((ct) =>
+                    (ct.parcelas ?? []).filter((p) => OPEN_STATUSES.has(p.status_manual_override))
                 );
-                // Use central brain — getRiskStatus(>=30) = PERDA, (>=15) = INADIMPLENTE, etc.
-                status = getRiskStatus(maxLate) as ClientStatus;
+
+                // Cross-default: worst delay across all open parcels
+                if (openParcelas.length > 0) {
+                    const maxLate = Math.max(
+                        ...openParcelas.map((p) => daysLate(p.data_vencimento, todayStr))
+                    );
+                    status = getRiskStatus(maxLate) as ClientStatus;
+                }
+
+                // nextVencimento uses same open parcelas
+                const sortedDates = openParcelas.map((p) => p.data_vencimento).sort();
+                const futureDates = sortedDates.filter((d) => d >= todayStr);
+                const proximoVencimento =
+                    futureDates[0] ?? sortedDates[sortedDates.length - 1] ?? null;
+
+                // Sum total active contract value
+                const valorTotalAtivo = contratos.reduce(
+                    (s, ct) => s + (ct.valor_total_contrato ?? 0), 0
+                );
+                const tipoContrato = contratos[0]?.tipo_contrato ?? null;
+
+                return {
+                    id: c.id as string,
+                    nomeCliente: (c.nome_cliente as string) ?? "—",
+                    empresaLabel: c.empresa_label as string | null,
+                    valorTotalAtivo,
+                    proximoVencimento,
+                    status,
+                    tipoContrato,
+                    deletedAt: (c as any).deleted_at as string | null,
+                };
             }
 
-            // Sum total active contract value
-            const valorTotalAtivo = contratos.reduce(
-                (s, ct) => s + (ct.valor_total_contrato ?? 0),
-                0
-            );
-
-            // Próximo vencimento: earliest upcoming date, or latest overdue date
-            const sortedDates = openParcelas
-                .map((p) => p.data_vencimento)
-                .sort();
-            const futureDates = sortedDates.filter((d) => d >= todayStr);
-            const proximoVencimento =
-                futureDates[0] ?? sortedDates[sortedDates.length - 1] ?? null;
-
-            // Primary tipo_contrato (from first contract)
+            // QUEBRA DE CONTRATO path — no open parcelas, just show totals
+            const valorTotalAtivo = contratos.reduce((s, ct) => s + (ct.valor_total_contrato ?? 0), 0);
             const tipoContrato = contratos[0]?.tipo_contrato ?? null;
-
             return {
                 id: c.id as string,
                 nomeCliente: (c.nome_cliente as string) ?? "—",
                 empresaLabel: c.empresa_label as string | null,
                 valorTotalAtivo,
-                proximoVencimento,
+                proximoVencimento: null,
                 status,
                 tipoContrato,
                 deletedAt: (c as any).deleted_at as string | null,
@@ -184,36 +183,36 @@ export default async function ConsultarClientesPage({
 
     // ─────────────────────────────────────────────────────────────────────────
     return (
-        <div className="flex flex-col gap-8">
+        <div className="flex flex-col gap-6 max-w-[1600px] mx-auto pb-10">
 
             {/* Breadcrumb */}
-            <nav className="flex items-center gap-2 text-xs">
-                <Link href="/" className="text-gray-400 hover:text-white transition-colors">
+            <nav className="flex items-center gap-2 text-[10px]">
+                <Link href="/" className="text-gray-500 hover:text-white transition-colors">
                     Dashboard
                 </Link>
-                <span className="text-gray-600">/</span>
-                <Link href="/contas-a-receber" className="text-gray-400 hover:text-white transition-colors">
-                    Contas a receber
+                <span className="text-gray-700">/</span>
+                <Link href="/contas-a-receber" className="text-gray-500 hover:text-white transition-colors">
+                    Contas à Receber
                 </Link>
-                <span className="text-gray-600">/</span>
-                <span className="text-orange-500 font-semibold">Consultar Clientes</span>
+                <span className="text-gray-700">/</span>
+                <span className="text-[#ffa300] font-semibold">Consultar Clientes</span>
             </nav>
 
             {/* Header */}
             <div className="flex items-center justify-between gap-4">
                 <div>
-                    <h1 className="text-3xl font-bold text-white tracking-tight">
+                    <h1 className="text-2xl font-black text-white tracking-tight leading-none mb-1">
                         Gestão de Clientes
                     </h1>
-                    <p className="text-sm text-gray-500 mt-1">
+                    <p className="text-xs text-gray-500 font-medium">
                         {allClients.length} clientes cadastrados
                     </p>
                 </div>
                 <Link
                     href="/cadastro"
-                    className="flex items-center gap-2 rounded-xl bg-orange-500 hover:bg-orange-400 active:bg-orange-600 transition-colors px-5 py-2.5 text-sm font-bold text-black shrink-0"
+                    className="flex items-center gap-2 rounded-xl bg-[#ffa300] hover:bg-orange-400 active:bg-orange-600 transition-colors px-5 py-2.5 text-xs font-bold text-black shrink-0"
                 >
-                    <Plus size={16} strokeWidth={2.5} />
+                    <Plus size={14} strokeWidth={2.5} />
                     Novo Cliente
                 </Link>
             </div>
@@ -221,40 +220,40 @@ export default async function ConsultarClientesPage({
             {/* KPI Filter Cards — clicking an active card clears the filter */}
             <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
                 <Link href={currentFilter === "em dia" ? "/consultar-clientes" : "/consultar-clientes?status=em dia"}>
-                    <KpiCard
-                        title="Em Dia"
-                        value={countEmDia}
-                        subtitle="Contratos sem atraso"
-                        colorTheme="green"
-                        isActive={currentFilter === "em dia"}
-                    />
+                    <div className={`flex flex-col justify-between gap-3 rounded-2xl bg-[#0A0A0A] border p-5 transition-all shadow-2xl ${currentFilter === "em dia" ? "border-[#34C759]/40 shadow-[0_0_15px_rgba(52,199,89,0.1)]" : "border-white/5 hover:border-[#34C759]/30"}`}>
+                        <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-[#34C759]">
+                            <CheckCircle2 size={13} />
+                            Em Dia
+                        </div>
+                        <span className="text-2xl font-black text-white leading-none tracking-tight">{countEmDia}</span>
+                    </div>
                 </Link>
                 <Link href={currentFilter === "atraso" ? "/consultar-clientes" : "/consultar-clientes?status=atraso"}>
-                    <KpiCard
-                        title="Em Atraso"
-                        value={countAtraso}
-                        subtitle="1 a 14 dias de atraso"
-                        colorTheme="orange"
-                        isActive={currentFilter === "atraso"}
-                    />
+                    <div className={`flex flex-col justify-between gap-3 rounded-2xl bg-[#0A0A0A] border p-5 transition-all shadow-2xl ${currentFilter === "atraso" ? "border-[#FF9500]/40 shadow-[0_0_15px_rgba(255,149,0,0.1)]" : "border-white/5 hover:border-[#FF9500]/30"}`}>
+                        <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-[#FF9500]">
+                            <Clock size={13} />
+                            Em Atraso
+                        </div>
+                        <span className="text-2xl font-black text-white leading-none tracking-tight">{countAtraso}</span>
+                    </div>
                 </Link>
                 <Link href={currentFilter === "inadimplente" ? "/consultar-clientes" : "/consultar-clientes?status=inadimplente"}>
-                    <KpiCard
-                        title="Inadimplente"
-                        value={countInadimplente}
-                        subtitle="15 a 30 dias de atraso"
-                        colorTheme="red"
-                        isActive={currentFilter === "inadimplente"}
-                    />
+                    <div className={`flex flex-col justify-between gap-3 rounded-2xl bg-[#0A0A0A] border p-5 transition-all shadow-2xl ${currentFilter === "inadimplente" ? "border-[#FF453A]/40 shadow-[0_0_15px_rgba(255,69,58,0.1)]" : "border-white/5 hover:border-[#FF453A]/30"}`}>
+                        <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-[#FF453A]">
+                            <AlertCircle size={13} />
+                            Inadimplente
+                        </div>
+                        <span className="text-2xl font-black text-white leading-none tracking-tight">{countInadimplente}</span>
+                    </div>
                 </Link>
                 <Link href={currentFilter === "perda" ? "/consultar-clientes" : "/consultar-clientes?status=perda"}>
-                    <KpiCard
-                        title="Perda de Faturamento"
-                        value={countPerda}
-                        subtitle="Mais de 30 dias em aberto"
-                        colorTheme="darkRed"
-                        isActive={currentFilter === "perda"}
-                    />
+                    <div className={`flex flex-col justify-between gap-3 rounded-2xl bg-[#0A0A0A] border p-5 transition-all shadow-2xl ${currentFilter === "perda" ? "border-[#FF3B30]/40 shadow-[0_0_15px_rgba(255,59,48,0.12)]" : "border-white/5 hover:border-[#FF3B30]/30"}`}>
+                        <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-[#FF3B30]">
+                            <ShieldAlert size={13} />
+                            Perda de Faturamento
+                        </div>
+                        <span className="text-2xl font-black text-white leading-none tracking-tight">{countPerda}</span>
+                    </div>
                 </Link>
             </div>
 

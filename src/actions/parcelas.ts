@@ -3,8 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase";
 import { registrarLog } from "@/lib/logger";
-import { calcularNovoValorContrato } from "@/lib/financeRules";
-import { calcularDataDisponibilidade } from "@/lib/utils";
+import { calcularNovoValorContrato, calcularDataDisponibilidade, STATUS_PAGAMENTO } from "@/lib/financeRules";
 import { requireAuth } from "@/lib/authGuard";
 
 // ─── Shared revalidation ──────────────────────────────────────────────────────
@@ -67,6 +66,10 @@ export async function registrarPagamentoCompleto(
 
         // ── Step 2: Calculate real clearing date for THIS payment ─────────────────
         const disponivelEmReal = calcularDataDisponibilidade(dataPagamento, plataforma);
+        const todayStr = new Date().toISOString().split('T')[0];
+        const statusPagamento = disponivelEmReal > todayStr
+            ? STATUS_PAGAMENTO.PROCESSANDO
+            : STATUS_PAGAMENTO.RECEBIDO;
 
         // ── Step 3: Mark parcela as PAGO + fix its availability date ─────────────
         const updatePayload: any = {
@@ -117,7 +120,7 @@ export async function registrarPagamentoCompleto(
                 imposto_retido: impostoRetido || null,
                 valor_liquido_real: valorLiquidoReal,
                 plataforma: plataforma as any,
-                status_pagamento: 'RECEBIDO' as any,
+                status_pagamento: statusPagamento as any,
                 anexo_url: anexoUrl || null,
             });
 

@@ -5,6 +5,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { registrarLog } from "@/lib/logger";
 import { editarValorContrato } from "@/actions/contratos";
 import { requireAuth, requireAdmin } from "@/lib/authGuard";
+import { STATUS_PARCELA, STATUS_CLIENTE } from "@/lib/financeRules";
 
 export interface ActionResult {
     ok: boolean;
@@ -191,5 +192,60 @@ export async function editarCliente(
         return { ok: true };
     } catch (err: any) {
         return { ok: false, error: err.message || "Erro desconhecido." };
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. QUEBRAR CONTRATO — marks all unpaid parcelas + client as QUEBRA DE CONTRATO
+// ─────────────────────────────────────────────────────────────────────────────
+export async function quebrarContrato(clienteId: string): Promise<ActionResult> {
+    try {
+        await requireAdmin();
+
+        const { data: contratos, error: ctErr } = await supabaseAdmin
+            .from('contratos')
+            .select('id')
+            .eq('cliente_id', clienteId)
+            .is('deleted_at', null);
+        if (ctErr) return { ok: false, error: ctErr.message };
+        if (!contratos || contratos.length === 0) return { ok: false, error: 'Nenhum contrato encontrado.' };
+
+        const contratoIds = contratos.map((c: any) => c.id);
+
+        const STATUSES_TO_MARK = [
+            STATUS_PARCELA.NORMAL,
+            STATUS_PARCELA.ATRASADO,
+            STATUS_PARCELA.INADIMPLENTE,
+            STATUS_PARCELA.PERDA_FATURAMENTO,
+            STATUS_PARCELA.POSSUI_INADIMPLENCIA,
+            STATUS_PARCELA.POSSUI_PERDA,
+            STATUS_PARCELA.RENOVAR_CONTRATO,
+        ];
+
+        const { error: parcelasErr } = await supabaseAdmin
+            .from('parcelas')
+            .update({ status_manual_override: STATUS_PARCELA.QUEBRA_CONTRATO })
+            .in('contrato_id', contratoIds)
+            .is('deleted_at', null)
+            .in('status_manual_override', STATUSES_TO_MARK);
+        if (parcelasErr) return { ok: false, error: parcelasErr.message };
+
+        const { error: clienteErr } = await supabaseAdmin
+            .from('clientes')
+            .update({ status_cliente: STATUS_CLIENTE.QUEBRA_CONTRATO })
+            .eq('id', clienteId);
+        if (clienteErr) return { ok: false, error: clienteErr.message };
+
+        await registrarLog(
+            clienteId,
+            'CLIENTES',
+            'Aplicou Quebra de Contrato — todas as parcelas abertas marcadas como QUEBRA DE CONTRATO'
+        );
+        revalidatePath(`/cliente/${clienteId}`, 'page');
+        revalidatePath('/consultar-clientes');
+        revalidatePath('/contas-a-receber/lista');
+        return { ok: true };
+    } catch (err: any) {
+        return { ok: false, error: err.message || 'Erro desconhecido.' };
     }
 }

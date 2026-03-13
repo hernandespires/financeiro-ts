@@ -6,7 +6,7 @@ import {
     TrendingUp,
     TrendingDown,
     Banknote,
-    BookOpen,
+    BarChart3,
     UserSearch,
     AlertTriangle,
 } from "lucide-react";
@@ -70,7 +70,7 @@ export default async function ContasAReceberPage({
     const { data: parcelasData, error } = await supabaseAdmin
         .from("parcelas")
         .select("*, contratos!inner(deleted_at, clientes!inner(id, nome_cliente, deleted_at))")
-        .eq("status_manual_override", "NORMAL")
+        .in("status_manual_override", ["NORMAL", "ATRASADO", "INADIMPLENTE", "PERDA DE FATURAMENTO", "POSSUI INADIMPLENCIA", "POSSUI PERDA"])
         .is("deleted_at", null)
         .order("data_vencimento", { ascending: true });
 
@@ -355,8 +355,8 @@ export default async function ContasAReceberPage({
 
                     {/* ROW 3 — Action buttons */}
                     <div className="grid grid-cols-3 gap-4">
-                        <ActionCardButton href="/cadastro" icon={<Banknote />} label="Lançamento de Recebimento" />
-                        <ActionCardButton href="/contas-a-receber/previsao" icon={<BookOpen />} label="Previsão" />
+                        <ActionCardButton href="/contas-a-receber/lista" icon={<Banknote />} label="Mesa de operações" />
+                        <ActionCardButton href="/contas-a-receber/metricas" icon={<BarChart3 />} label="Métricas" />
                         <ActionCardButton href="/consultar-clientes" icon={<UserSearch />} label="Consultar Clientes" />
                     </div>
                 </div>

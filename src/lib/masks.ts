@@ -75,35 +75,3 @@ export function maskPercent(raw: string): string {
 export function unmaskPercent(masked: string): number {
     return parseFloat(masked.replace(',', '.')) || 0;
 }
-
-// ─── Validators ──────────────────────────────────────────────────────────────
-
-export function validateCnpj(raw: string): string | undefined {
-    const digits = raw.replace(/\D/g, '');
-    if (digits.length === 0) return 'CNPJ / EIN é obrigatório.';
-    if (digits.length <= 9) {
-        if (digits.length !== 9) return 'EIN deve ter exatamente 9 dígitos.';
-    } else {
-        if (digits.length !== 14) return 'CNPJ deve ter exatamente 14 dígitos.';
-    }
-    return undefined;
-}
-
-export function validatePhone(raw: string): string | undefined {
-    const digits = raw.replace(/\D/g, '');
-    if (digits.length > 0 && digits.length < 7) return 'Telefone deve ter ao menos 7 dígitos.';
-    return undefined;
-}
-
-function getMax18YearsAgo(): string {
-    const d = new Date();
-    d.setFullYear(d.getFullYear() - 18);
-    return d.toISOString().split('T')[0];
-}
-
-export function validateAniversario(value: string): string | undefined {
-    if (!value) return undefined;
-    const max = getMax18YearsAgo();
-    if (value > max) return 'O cliente deve ter ao menos 18 anos.';
-    return undefined;
-}

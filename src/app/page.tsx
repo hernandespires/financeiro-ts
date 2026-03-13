@@ -1,246 +1,222 @@
 import Link from "next/link";
 import {
-  Wallet,
-  FileText,
-  CreditCard,
-  LineChart,
-  Bell,
-  Calendar,
-  Building,
-  TrendingUp,
-  TrendingDown,
-  ArrowRight,
+    Table2,
+    BarChart2,
+    Users,
+    UserPlus,
+    ArrowRight,
+    TrendingUp,
+    TrendingDown,
+    AlertTriangle,
+    Wallet,
 } from "lucide-react";
+import { supabaseAdmin } from "@/lib/supabase";
+import { brl, toDateStr, daysLate } from "@/lib/utils";
+import { syncFinanceStatuses, getRiskStatus } from "@/lib/financeRules";
 
-// ── Mock bar-chart data ──────────────────────────────────────────────────────
-const chartBars = [
-  { month: "Jan", h: 55 },
-  { month: "Fev", h: 70 },
-  { month: "Mar", h: 40 },
-  { month: "Abr", h: 80 },
-  { month: "Mai", h: 60 },
-  { month: "Jun", h: 90 },
-  { month: "Jul", h: 50 },
-  { month: "Ago", h: 75 },
-  { month: "Set", h: 45 },
-  { month: "Out", h: 85 },
-  { month: "Nov", h: 65 },
-  { month: "Dez", h: 95 },
-];
+export default async function HomePage() {
+    const todayStr = toDateStr(new Date());
+    const currentMonth = todayStr.slice(0, 7);
+    const [y, mo] = currentMonth.split("-").map(Number);
+    const startDate = `${currentMonth}-01`;
+    const endDate = `${currentMonth}-${String(new Date(y, mo, 0).getDate()).padStart(2, "0")}`;
 
-// ── Mock transactions ────────────────────────────────────────────────────────
-const transactions = [
-  { id: 1, time: "Às 14:44 | 26/02/2026" },
-  { id: 2, time: "Às 14:44 | 26/02/2026" },
-  { id: 3, time: "Às 14:44 | 26/02/2026" },
-];
+    await syncFinanceStatuses(supabaseAdmin);
 
-// ── Shortcut cards ────────────────────────────────────────────────────────────
-const shortcuts = [
-  { label: "Relatório mensal", icon: LineChart },
-  { label: "Alertas financeiros", icon: Bell },
-  { label: "Projeções anuais", icon: Calendar },
-  { label: "Centro de custos", icon: Building },
-];
+    // ── Real KPIs ──────────────────────────────────────────────────────────────
+    const { data: parcelas } = await supabaseAdmin
+        .from("parcelas")
+        .select("data_vencimento, status_manual_override, valor_previsto, deleted_at, contratos!inner(deleted_at, clientes!inner(deleted_at))")
+        .is("deleted_at", null)
+        .gte("data_vencimento", startDate)
+        .lte("data_vencimento", endDate);
 
-export default function HomePage() {
-  return (
-    <div className="flex flex-col gap-6">
+    let totalPrevisto = 0;
+    let totalRecebido = 0;
+    let totalAtrasado = 0;
+    let totalInadimplente = 0;
 
-      {/* ══════════════════════════════════════════════
-          TOP — Metrics + Quick Actions
-      ══════════════════════════════════════════════ */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+    for (const p of (parcelas ?? []) as any[]) {
+        if (p.contratos?.deleted_at || p.contratos?.clientes?.deleted_at) continue;
+        const s = p.status_manual_override ?? "NORMAL";
+        const v = p.valor_previsto ?? 0;
+        if (s === "PAGO" || s === "INADIMPLENTE RECEBIDO") { totalRecebido += v; continue; }
+        if (s === "RENOVAR CONTRATO" || s === "RENOVADO" || s === "FINALIZAR PROJETO" || s === "QUEBRA DE CONTRATO" || s === "CONTRATO À VISTA") continue;
+        const dl = daysLate(p.data_vencimento, todayStr);
+        const risk = getRiskStatus(dl);
+        if (risk === "PERDA" || risk === "INADIMPLENTE") { totalInadimplente += v; continue; }
+        if (risk === "ATRASO") { totalAtrasado += v; continue; }
+        totalPrevisto += v;
+    }
 
-        {/* LEFT — Metric cards */}
-        <div className="grid grid-cols-3 gap-4">
+    // ── Clientes count ─────────────────────────────────────────────────────────
+    const { count: totalClientes } = await supabaseAdmin
+        .from("clientes")
+        .select("*", { count: "exact", head: true })
+        .is("deleted_at", null);
 
-          {/* Saldo em conta */}
-          <div className="flex flex-col justify-between rounded-2xl bg-[#FFA300] p-5 min-h-[120px]">
-            <span className="text-xs font-semibold text-black/70 uppercase tracking-wide">
-              Saldo em conta
-            </span>
-            <div>
-              <p className="text-2xl font-extrabold text-black leading-tight">
-                R$ 000,00
-              </p>
-              <p className="flex items-center gap-1 text-xs text-black/60 mt-1 font-medium">
-                <TrendingUp size={12} /> +2%{" "}
-                <span className="font-normal">(Neste mês)</span>
-              </p>
-            </div>
-          </div>
+    // ── Vence hoje ─────────────────────────────────────────────────────────────
+    const venceHoje = (parcelas ?? []).filter((p: any) =>
+        p.data_vencimento === todayStr &&
+        p.status_manual_override === "NORMAL" &&
+        !p.contratos?.deleted_at &&
+        !p.contratos?.clientes?.deleted_at
+    ).length;
 
-          {/* A receber */}
-          <div className="flex flex-col justify-between rounded-2xl bg-[#0A0A0A] border border-white/[0.06] p-5 min-h-[120px]">
-            <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
-              A receber
-            </span>
-            <div>
-              <p className="text-2xl font-extrabold text-green-400 leading-tight">
-                R$ 000,00
-              </p>
-              <p className="flex items-center gap-1 text-xs text-gray-500 mt-1 font-medium">
-                <TrendingUp size={12} className="text-green-400" /> +3%{" "}
-                <span className="font-normal">(Neste mês)</span>
-              </p>
-            </div>
-          </div>
+    const formattedDate = new Date(todayStr + "T00:00:00").toLocaleDateString("pt-BR", {
+        weekday: "long", day: "2-digit", month: "long", year: "numeric",
+    });
 
-          {/* A pagar */}
-          <div className="flex flex-col justify-between rounded-2xl bg-[#0A0A0A] border border-white/[0.06] p-5 min-h-[120px]">
-            <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
-              A pagar
-            </span>
-            <div>
-              <p className="text-2xl font-extrabold text-red-400 leading-tight">
-                R$ 000,00
-              </p>
-              <p className="flex items-center gap-1 text-xs text-gray-500 mt-1 font-medium">
-                <TrendingDown size={12} className="text-red-400" /> -1,3%{" "}
-                <span className="font-normal">(Neste mês)</span>
-              </p>
-            </div>
-          </div>
-        </div>
+    return (
+        <div className="flex flex-col gap-6">
 
-        {/* RIGHT — Quick action buttons */}
-        <div className="grid grid-cols-3 gap-4">
-
-          <Link
-            href="/contas-a-receber"
-            className="flex flex-col items-center justify-center gap-3 rounded-2xl bg-[#FFA300] hover:bg-[#e6930d] active:bg-[#cc8200] transition-colors p-5 min-h-[120px] cursor-pointer"
-          >
-            <Wallet size={28} strokeWidth={1.8} className="text-black" />
-            <span className="text-xs font-bold text-black text-center leading-tight">
-              Contas a receber
-            </span>
-          </Link>
-
-          <Link
-            href="/contas-a-pagar"
-            className="flex flex-col items-center justify-center gap-3 rounded-2xl bg-[#FFA300] hover:bg-[#e6930d] active:bg-[#cc8200] transition-colors p-5 min-h-[120px] cursor-pointer"
-          >
-            <FileText size={28} strokeWidth={1.8} className="text-black" />
-            <span className="text-xs font-bold text-black text-center leading-tight">
-              Contas a pagar
-            </span>
-          </Link>
-
-          <Link
-            href="/cartoes"
-            className="flex flex-col items-center justify-center gap-3 rounded-2xl bg-[#FFA300] hover:bg-[#e6930d] active:bg-[#cc8200] transition-colors p-5 min-h-[120px] cursor-pointer"
-          >
-            <CreditCard size={28} strokeWidth={1.8} className="text-black" />
-            <span className="text-xs font-bold text-black text-center leading-tight">
-              Cartões
-            </span>
-          </Link>
-        </div>
-      </div>
-
-      {/* ══════════════════════════════════════════════
-          MIDDLE — Chart + Transactions
-      ══════════════════════════════════════════════ */}
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_420px] gap-6">
-
-        {/* LEFT — Bar chart */}
-        <div className="flex flex-col rounded-2xl bg-[#0A0A0A] border border-white/[0.06] p-6">
-          <h2 className="text-base font-bold text-[#FFA300] mb-6">
-            Métricas do Financeiro
-          </h2>
-
-          {/* Chart area */}
-          <div className="flex-1 flex items-end gap-2 min-h-[160px]">
-            {chartBars.map((bar) => (
-              <div key={bar.month} className="flex flex-col items-center gap-1 flex-1">
-                <div
-                  className="w-full rounded-t-lg bg-[#FFA300] hover:bg-[#e6930d] transition-all duration-300"
-                  style={{ height: `${bar.h}%`, minHeight: "16px" }}
-                />
-                <span className="text-[10px] text-gray-500 font-medium">
-                  {bar.month}
-                </span>
-              </div>
-            ))}
-          </div>
-
-          {/* Bottom button */}
-          <div className="mt-6 flex justify-center">
-            <button className="text-xs text-gray-400 hover:text-[#FFA300] transition-colors flex items-center gap-1 underline-offset-4 hover:underline">
-              ↓ Ver todas as métricas
-            </button>
-          </div>
-        </div>
-
-        {/* RIGHT — Transactions */}
-        <div className="flex flex-col rounded-2xl bg-[#0A0A0A] border border-white/[0.06] p-6">
-          <h2 className="text-base font-bold text-[#FFA300] mb-5">
-            Últimas transações
-          </h2>
-
-          <div className="flex flex-col gap-4 flex-1">
-            {transactions.map((tx) => (
-              <div
-                key={tx.id}
-                className="flex items-center gap-3 pb-4 border-b border-white/5 last:border-0 last:pb-0"
-              >
-                {/* Avatar */}
-                <div className="w-9 h-9 rounded-full bg-[#FFA300]/20 border border-[#FFA300]/40 flex items-center justify-center shrink-0">
-                  <span className="text-xs font-bold text-[#FFA300]">C</span>
+            {/* ── Greeting ── */}
+            <div className="flex items-end justify-between">
+                <div>
+                    <p className="text-[11px] text-gray-600 uppercase tracking-widest font-medium capitalize">
+                        {formattedDate}
+                    </p>
+                    <h1 className="text-2xl font-black text-white mt-1 tracking-tight">
+                        Visão Geral
+                    </h1>
                 </div>
-
-                {/* Text */}
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-white leading-snug">
-                    <span className="font-semibold">Colaborador</span> realizou
-                    um{" "}
-                    <span className="text-[#FFA300] font-semibold">
-                      pagamento
-                    </span>
-                  </p>
-                  <p className="text-[11px] text-gray-500 mt-0.5">{tx.time}</p>
-                </div>
-
-                {/* Link */}
                 <Link
-                  href="#"
-                  className="text-xs text-[#FFA300] hover:text-[#e6930d] font-semibold shrink-0 flex items-center gap-0.5 transition-colors"
+                    href="/contas-a-receber/lista"
+                    className="flex items-center gap-1.5 text-[11px] text-[#ffa300] hover:text-white transition-colors font-semibold"
                 >
-                  Ver <ArrowRight size={12} />
+                    Mesa de operações <ArrowRight size={13} />
                 </Link>
-              </div>
-            ))}
-          </div>
-
-          {/* Bottom button */}
-          <div className="mt-5 flex justify-center">
-            <button className="text-xs text-gray-400 hover:text-[#FFA300] transition-colors flex items-center gap-1 underline-offset-4 hover:underline">
-              ↓ Ver todas as transações
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* ══════════════════════════════════════════════
-          BOTTOM — Shortcuts
-      ══════════════════════════════════════════════ */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-        {shortcuts.map(({ label, icon: Icon }) => (
-          <button
-            key={label}
-            className="flex items-center gap-4 rounded-2xl bg-[#0A0A0A] border border-white/[0.06] hover:border-[#FFA300]/40 p-5 transition-all duration-200 group text-left"
-          >
-            <div className="w-10 h-10 rounded-xl bg-[#FFA300]/10 flex items-center justify-center shrink-0 group-hover:bg-[#FFA300]/20 transition-colors">
-              <Icon size={20} className="text-[#FFA300]" strokeWidth={1.8} />
             </div>
-            <span className="text-sm font-semibold text-white/80 group-hover:text-white transition-colors leading-tight">
-              {label}
-            </span>
-          </button>
-        ))}
-      </div>
 
-    </div>
-  );
+            {/* ── KPI Strip ── */}
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+
+                <div className="flex flex-col justify-between rounded-2xl bg-[#0A0A0A] border border-white/[0.06] p-5 min-h-[100px] hover:border-[#34C759]/30 transition-all">
+                    <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-[#34C759]">
+                        <TrendingUp size={12} /> A Receber (mês)
+                    </div>
+                    <span className="text-2xl font-black text-white leading-none tracking-tight">{brl(totalPrevisto)}</span>
+                </div>
+
+                <div className="flex flex-col justify-between rounded-2xl bg-[#0A0A0A] border border-white/[0.06] p-5 min-h-[100px] hover:border-[#ffa300]/30 transition-all">
+                    <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-[#ffa300]">
+                        <Wallet size={12} /> Recebido (mês)
+                    </div>
+                    <span className="text-2xl font-black text-white leading-none tracking-tight">{brl(totalRecebido)}</span>
+                </div>
+
+                <div className="flex flex-col justify-between rounded-2xl bg-[#0A0A0A] border border-white/[0.06] p-5 min-h-[100px] hover:border-[#FF9500]/30 transition-all">
+                    <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-[#FF9500]">
+                        <TrendingDown size={12} /> Em Atraso
+                    </div>
+                    <span className="text-2xl font-black text-white leading-none tracking-tight">{brl(totalAtrasado)}</span>
+                </div>
+
+                <div className="flex flex-col justify-between rounded-2xl bg-[#0A0A0A] border border-white/[0.06] p-5 min-h-[100px] hover:border-[#FF453A]/30 transition-all">
+                    <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-[#FF453A]">
+                        <AlertTriangle size={12} /> Inadimplência
+                    </div>
+                    <span className="text-2xl font-black text-white leading-none tracking-tight">{brl(totalInadimplente)}</span>
+                </div>
+            </div>
+
+            {/* ── Quick info bar ── */}
+            <div className="flex items-center gap-4 rounded-2xl bg-[#0A0A0A] border border-white/[0.06] px-6 py-4">
+                <div className="flex flex-col">
+                    <span className="text-[10px] text-gray-600 uppercase tracking-widest font-medium">Vence Hoje</span>
+                    <span className="text-xl font-black text-[#FFD60A] mt-0.5">{venceHoje} parcela{venceHoje !== 1 ? "s" : ""}</span>
+                </div>
+                <div className="w-px h-10 bg-white/[0.06]" />
+                <div className="flex flex-col">
+                    <span className="text-[10px] text-gray-600 uppercase tracking-widest font-medium">Clientes Ativos</span>
+                    <span className="text-xl font-black text-white mt-0.5">{totalClientes ?? 0}</span>
+                </div>
+                <div className="flex-1" />
+                <Link
+                    href={`/contas-a-receber?date=${todayStr}`}
+                    className="text-[11px] text-[#ffa300] hover:text-white transition-colors font-semibold flex items-center gap-1"
+                >
+                    Ver agenda do dia <ArrowRight size={12} />
+                </Link>
+            </div>
+
+            {/* ── Navigation cards ── */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+
+                <Link
+                    href="/contas-a-receber/lista"
+                    className="group flex flex-col gap-4 rounded-2xl bg-[#0A0A0A] border border-white/[0.06] hover:border-[#ffa300]/30 p-6 transition-all duration-200 hover:bg-[#ffa300]/[0.03]"
+                >
+                    <div className="w-10 h-10 rounded-xl bg-[#ffa300]/10 flex items-center justify-center group-hover:bg-[#ffa300]/20 transition-colors">
+                        <Table2 size={20} className="text-[#ffa300]" strokeWidth={1.8} />
+                    </div>
+                    <div>
+                        <p className="text-sm font-bold text-white group-hover:text-[#ffa300] transition-colors leading-tight">
+                            Mesa de Operações
+                        </p>
+                        <p className="text-[11px] text-gray-500 mt-1 leading-snug">
+                            Gerencie e dê baixa nas parcelas do mês
+                        </p>
+                    </div>
+                    <ArrowRight size={14} className="text-gray-600 group-hover:text-[#ffa300] transition-colors mt-auto" />
+                </Link>
+
+                <Link
+                    href="/contas-a-receber/previsao"
+                    className="group flex flex-col gap-4 rounded-2xl bg-[#0A0A0A] border border-white/[0.06] hover:border-[#34C759]/30 p-6 transition-all duration-200 hover:bg-[#34C759]/[0.02]"
+                >
+                    <div className="w-10 h-10 rounded-xl bg-[#34C759]/10 flex items-center justify-center group-hover:bg-[#34C759]/20 transition-colors">
+                        <BarChart2 size={20} className="text-[#34C759]" strokeWidth={1.8} />
+                    </div>
+                    <div>
+                        <p className="text-sm font-bold text-white group-hover:text-[#34C759] transition-colors leading-tight">
+                            Previsão de Caixa
+                        </p>
+                        <p className="text-[11px] text-gray-500 mt-1 leading-snug">
+                            Projeções mensais e anuais de recebimento
+                        </p>
+                    </div>
+                    <ArrowRight size={14} className="text-gray-600 group-hover:text-[#34C759] transition-colors mt-auto" />
+                </Link>
+
+                <Link
+                    href="/consultar-clientes"
+                    className="group flex flex-col gap-4 rounded-2xl bg-[#0A0A0A] border border-white/[0.06] hover:border-blue-400/30 p-6 transition-all duration-200 hover:bg-blue-500/[0.02]"
+                >
+                    <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center group-hover:bg-blue-500/20 transition-colors">
+                        <Users size={20} className="text-blue-400" strokeWidth={1.8} />
+                    </div>
+                    <div>
+                        <p className="text-sm font-bold text-white group-hover:text-blue-400 transition-colors leading-tight">
+                            Clientes
+                        </p>
+                        <p className="text-[11px] text-gray-500 mt-1 leading-snug">
+                            Consulte e gerencie sua carteira de clientes
+                        </p>
+                    </div>
+                    <ArrowRight size={14} className="text-gray-600 group-hover:text-blue-400 transition-colors mt-auto" />
+                </Link>
+
+                <Link
+                    href="/cadastro"
+                    className="group flex flex-col gap-4 rounded-2xl bg-[#0A0A0A] border border-white/[0.06] hover:border-purple-400/30 p-6 transition-all duration-200 hover:bg-purple-500/[0.02]"
+                >
+                    <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center group-hover:bg-purple-500/20 transition-colors">
+                        <UserPlus size={20} className="text-purple-400" strokeWidth={1.8} />
+                    </div>
+                    <div>
+                        <p className="text-sm font-bold text-white group-hover:text-purple-400 transition-colors leading-tight">
+                            Novo Cliente
+                        </p>
+                        <p className="text-[11px] text-gray-500 mt-1 leading-snug">
+                            Registre um novo cliente e contrato
+                        </p>
+                    </div>
+                    <ArrowRight size={14} className="text-gray-600 group-hover:text-purple-400 transition-colors mt-auto" />
+                </Link>
+
+            </div>
+
+        </div>
+    );
 }

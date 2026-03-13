@@ -6,7 +6,7 @@ import { restaurarParcela } from '@/actions/parcelas';
 
 interface Props { parcelaId: string; }
 
-export default function RestaurarParcelaBtn({ parcelaId }: Props) {
+export default function RestaurarParcelaButton({ parcelaId }: Props) {
     const [isPending, startTransition] = useTransition();
     const [error, setError] = useState<string | null>(null);
 

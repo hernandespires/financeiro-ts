@@ -1,11 +1,20 @@
 "use client";
 
 import { useState, useTransition, useEffect } from "react";
-import { Check, GitBranch, CreditCard, Scissors, Pencil, Trash2, AlertTriangle, RefreshCw, XCircle, Split, Eye, UploadCloud, Download, FileText } from "lucide-react";
+import { Check, GitBranch, CreditCard, Scissors, Pencil, Trash2, AlertTriangle, RefreshCw, XCircle, Eye, UploadCloud, Download, Split } from "lucide-react";
 import { registrarPagamentoCompleto, desmembrarParcela, editarParcela, softDeleteParcela, getParcelaDetails } from "@/actions/parcelas";
 import { renovarContrato } from "@/actions/renovacao";
 import Button from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
+import { brl } from "@/lib/utils";
+import {
+    STATUS_PARCELA,
+    calcularDiasAtraso,
+    calcularJuros,
+    calcularDataDisponibilidade,
+    canNaoRenovar,
+    canDarBaixa,
+} from "@/lib/financeRules";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface ParcelaForActions {
@@ -27,12 +36,6 @@ export interface ParcelaForActions {
 interface ParcelaActionsProps {
     parcela: ParcelaForActions;
 }
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-const brl = (v: number) =>
-    new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v || 0);
-
-const todayISO = () => new Date().toISOString().split("T")[0];
 
 // ─── Shared Input styles ──────────────────────────────────────────────────────
 const inputCls =
@@ -61,26 +64,15 @@ function PaymentModal({
     onSuccess: () => void;
 }) {
     const brutoOriginal = parcela.valor_bruto ?? parcela.valor_previsto ?? 0;
+    const todayStr = new Date().toISOString().split("T")[0];
+    const daysLate = parcela.data_vencimento ? calcularDiasAtraso(parcela.data_vencimento, todayStr) : 0;
+    const initialJuros = daysLate > 0 ? calcularJuros(brutoOriginal, daysLate).juros : 0;
 
-    let initialJuros = 0;
-    let daysLate = 0;
-    if (parcela.data_vencimento) {
-        const todayStr = new Date().toISOString().split("T")[0];
-        if (todayStr > parcela.data_vencimento) {
-            const t1 = new Date(parcela.data_vencimento).getTime();
-            const t2 = new Date(todayStr).getTime();
-            daysLate = Math.floor((t2 - t1) / (1000 * 3600 * 24));
-            if (daysLate >= 10) {
-                const mesesAtraso = Math.ceil(daysLate / 30);
-                initialJuros = brutoOriginal * 0.015 * mesesAtraso;
-            }
-        }
-    }
-
+    const s = parcela.status_manual_override;
     const statusText =
-        ["PERDA DE FATURAMENTO", "EM_PERDA_FATURAMENTO"].includes(parcela.status_manual_override)
+        s === STATUS_PARCELA.PERDA_FATURAMENTO || s === STATUS_PARCELA.POSSUI_PERDA
             ? "Fatura em Perda de Faturamento"
-            : ["INADIMPLENTE", "EM_INADIMPLENCIA"].includes(parcela.status_manual_override)
+            : s === STATUS_PARCELA.INADIMPLENTE || s === STATUS_PARCELA.POSSUI_INADIMPLENCIA
             ? "Fatura Inadimplente"
             : "Fatura Atrasada";
 
@@ -91,7 +83,7 @@ function PaymentModal({
     const expectedBruto = cobrarJuros && jurosCalculado > 0 ? baseBruto + jurosCalculado : baseBruto;
 
     const [valorPlataforma, setValorPlataforma] = useState(expectedBruto.toFixed(2));
-    const [dataPagamento, setDataPagamento] = useState(todayISO());
+    const [dataPagamento, setDataPagamento] = useState(todayStr);
     const [plataforma, setPlataforma] = useState(parcela.forma_pagamento_contrato || 'PIX');
     const [observacao, setObservacao] = useState(parcela.observacao || '');
 
@@ -332,32 +324,26 @@ function ParcelaDetailsModal({
     const cl = ct.clientes || {};
     const pag = Array.isArray(data.pagamentos) ? data.pagamentos[0] : (data.pagamentos || null);
 
-    const fmtNum = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
     const anexoUrl = pag?.anexo_url;
     const isPdf = anexoUrl?.toLowerCase().endsWith('.pdf');
 
-    // ── Lógica rigorosa de Status ────────────────
-    const parcelStatus: string = data.status_manual_override || 'NORMAL';
-    const isPago = parcelStatus === 'PAGO' || parcelStatus === 'INADIMPLENTE RECEBIDO';
-    const isDeadDebt = ['INADIMPLENTE', 'PERDA DE FATURAMENTO', 'EM_INADIMPLENCIA', 'EM_PERDA_FATURAMENTO'].includes(parcelStatus);
+    // ── Status & dias de atraso ────────────────────────────────────────────────
+    const parcelStatus: string = data.status_manual_override || STATUS_PARCELA.NORMAL;
+    const isPago = parcelStatus === STATUS_PARCELA.PAGO || parcelStatus === STATUS_PARCELA.INADIMPLENTE_RECEBIDO;
+    const isDeadDebt = [
+        STATUS_PARCELA.INADIMPLENTE, STATUS_PARCELA.PERDA_FATURAMENTO,
+        STATUS_PARCELA.POSSUI_INADIMPLENCIA, STATUS_PARCELA.POSSUI_PERDA,
+    ].includes(parcelStatus);
 
     const todayStr = new Date().toISOString().split("T")[0];
     const vencimentoStr = data.data_vencimento || "";
-    let daysLate = 0;
-    if (vencimentoStr && todayStr > vencimentoStr) {
-        const t1 = new Date(vencimentoStr).getTime();
-        const t2 = new Date(todayStr).getTime();
-        daysLate = Math.floor((t2 - t1) / (1000 * 3600 * 24));
-    }
+    const daysLate = vencimentoStr ? calcularDiasAtraso(vencimentoStr, todayStr) : 0;
 
     // Juros
-    let jurosCalculado = data.juros_aplicado || 0;
-    if (!jurosCalculado && daysLate >= 10 && !isPago) {
-        const mesesAtraso = Math.ceil(daysLate / 30) || 1;
-        jurosCalculado = (data.valor_bruto || data.valor_previsto || 0) * 0.015 * mesesAtraso;
-    }
+    const jurosCalculado = data.juros_aplicado ||
+        (!isPago && daysLate > 0 ? calcularJuros((data.valor_bruto || data.valor_previsto || 0), daysLate).juros : 0);
 
-    // Datas e Plataforma
+    // Plataforma e data de disponibilidade
     let txPlatform = (ct.forma_pagamento || '').toUpperCase();
     if (pag?.plataforma) txPlatform = pag.plataforma.toUpperCase();
 
@@ -365,18 +351,7 @@ function ParcelaDetailsModal({
     if (pag && pag.disponivel_em) {
         disponivelText = pag.disponivel_em.split('-').reverse().join('/');
     } else if (!isPago && !isDeadDebt && vencimentoStr) {
-        const refDate = new Date(vencimentoStr + 'T12:00:00');
-        if (txPlatform.includes('STRIPE')) {
-            refDate.setDate(refDate.getDate() + 5);
-        } else if (txPlatform.includes('IUGU')) {
-            let bizDays = 0;
-            while (bizDays < 3) {
-                refDate.setDate(refDate.getDate() + 1);
-                const dow = refDate.getDay();
-                if (dow !== 0 && dow !== 6) bizDays++;
-            }
-        }
-        const iso = refDate.toISOString().split('T')[0];
+        const iso = calcularDataDisponibilidade(vencimentoStr, txPlatform);
         disponivelText = `~ ${iso.split('-').reverse().join('/')}`;
     }
 
@@ -389,10 +364,10 @@ function ParcelaDetailsModal({
     // Cores das Badges da Ficha
     let badgeColor = "text-gray-400 bg-white/5 border-white/10";
     if (isPago) badgeColor = "text-[#34C759] bg-[#34C759]/10 border-[#34C759]/20";
-    else if (['PERDA DE FATURAMENTO', 'EM_PERDA_FATURAMENTO'].includes(parcelStatus)) badgeColor = "text-[#FF3B30] bg-[#FF3B30]/10 border-[#FF3B30]/20"; 
-    else if (['INADIMPLENTE', 'EM_INADIMPLENCIA'].includes(parcelStatus)) badgeColor = "text-[#FF453A] bg-[#FF453A]/10 border-[#FF453A]/20"; 
-    else if (parcelStatus === 'ATRASADO') badgeColor = "text-[#FF9500] bg-[#FF9500]/10 border-[#FF9500]/20";
-    else if (daysLate >= -3 && daysLate <= 0 && !isPago) badgeColor = "text-[#FFD60A] bg-[#FFD60A]/10 border-[#FFD60A]/20"; 
+    else if (parcelStatus === STATUS_PARCELA.PERDA_FATURAMENTO || parcelStatus === STATUS_PARCELA.POSSUI_PERDA) badgeColor = "text-[#FF3B30] bg-[#FF3B30]/10 border-[#FF3B30]/20";
+    else if (parcelStatus === STATUS_PARCELA.INADIMPLENTE || parcelStatus === STATUS_PARCELA.POSSUI_INADIMPLENCIA) badgeColor = "text-[#FF453A] bg-[#FF453A]/10 border-[#FF453A]/20";
+    else if (parcelStatus === STATUS_PARCELA.ATRASADO) badgeColor = "text-[#FF9500] bg-[#FF9500]/10 border-[#FF9500]/20";
+    else if (daysLate >= -3 && daysLate <= 0 && !isPago) badgeColor = "text-[#FFD60A] bg-[#FFD60A]/10 border-[#FFD60A]/20";
 
     const SectionTitle = ({ label, color }: { label: string, color: string }) => (
         <h3 className={`text-[10px] font-bold ${color} uppercase tracking-widest pl-1 mt-2 mb-1`}>{label}</h3>
@@ -492,13 +467,13 @@ function ParcelaDetailsModal({
                     </div>
 
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-1">
-                        <InfoBox label="Valor Bruto Esperado" value={fmtNum(data.valor_bruto || data.valor_previsto)} highlight="text-white font-mono text-lg" />
-                        <InfoBox label="Juros Aplicado" value={fmtNum(jurosCalculado)} highlight={jurosCalculado > 0 ? "text-[#FF3B30] font-mono text-lg" : "text-gray-600 font-mono text-lg"} />
-                        <InfoBox label={`Imposto Retido (${ct.imposto_percentual || 0}%)`} value={pag ? fmtNum(pag.imposto_retido) : "—"} highlight="text-rose-400 font-mono" />
+                        <InfoBox label="Valor Bruto Esperado" value={brl(data.valor_bruto || data.valor_previsto)} highlight="text-white font-mono text-lg" />
+                        <InfoBox label="Juros Aplicado" value={brl(jurosCalculado)} highlight={jurosCalculado > 0 ? "text-[#FF3B30] font-mono text-lg" : "text-gray-600 font-mono text-lg"} />
+                        <InfoBox label={`Imposto Retido (${ct.imposto_percentual || 0}%)`} value={pag ? brl(pag.imposto_retido) : "—"} highlight="text-rose-400 font-mono" />
                         <InfoBox label="Plataforma de Recebimento" value={pag ? pag.plataforma : txPlatform} />
                         
-                        <InfoBox label="Valor Recebido (Plataforma)" value={pag ? fmtNum(pag.valor_pago) : "—"} highlight={pag ? "text-blue-400 font-mono text-lg" : "text-gray-600 font-mono text-lg"} />
-                        <InfoBox label="Taxa do Gateway" value={pag ? fmtNum(pag.taxa_gateway) : "—"} highlight="text-rose-400 font-mono" />
+                        <InfoBox label="Valor Recebido (Plataforma)" value={pag ? brl(pag.valor_pago) : "—"} highlight={pag ? "text-blue-400 font-mono text-lg" : "text-gray-600 font-mono text-lg"} />
+                        <InfoBox label="Taxa do Gateway" value={pag ? brl(pag.taxa_gateway) : "—"} highlight="text-rose-400 font-mono" />
                         <InfoBox label="Data do Pagamento" value={pag && pag.data_pagamento ? pag.data_pagamento.split('-').reverse().join('/') : "—"} highlight="font-mono text-gray-300" />
                         <InfoBox label="Previsão de Saque" value={disponivelText} highlight="font-mono text-gray-300" />
 
@@ -506,7 +481,7 @@ function ParcelaDetailsModal({
                             <div className="flex flex-col p-4 rounded-xl bg-[#34C759]/5 border border-[#34C759]/20 shadow-inner">
                                 <span className="text-[11px] font-bold uppercase tracking-wider text-[#34C759]/70 mb-1">Líquido Real Depositado na Conta</span>
                                 <span className={`text-2xl font-mono font-black ${pag ? "text-[#34C759]" : "text-gray-600"}`}>
-                                    {pag && pag.valor_liquido_real !== undefined ? fmtNum(pag.valor_liquido_real) : "—"}
+                                    {pag && pag.valor_liquido_real !== undefined ? brl(pag.valor_liquido_real) : "—"}
                                 </span>
                             </div>
                         </div>
@@ -639,7 +614,7 @@ function EditParcelaModal({
     onClose: () => void;
 }) {
     const [valor, setValor] = useState(parcela.valor_previsto.toFixed(2));
-    const [dataVenc, setDataVenc] = useState(parcela.data_vencimento ?? todayISO());
+    const [dataVenc, setDataVenc] = useState(parcela.data_vencimento ?? new Date().toISOString().split("T")[0]);
     const [isPending, startTransition] = useTransition();
     const [error, setError] = useState<string | null>(null);
 
@@ -931,12 +906,12 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
     const isPago = localPago;
 
     const isActionable = [
-        "NORMAL",
-        "ATRASADO",
-        "INADIMPLENTE",
-        "EM_INADIMPLENCIA",
-        "PERDA DE FATURAMENTO",
-        "EM_PERDA_FATURAMENTO",
+        STATUS_PARCELA.NORMAL,
+        STATUS_PARCELA.ATRASADO,
+        STATUS_PARCELA.INADIMPLENTE,
+        STATUS_PARCELA.POSSUI_INADIMPLENCIA,
+        STATUS_PARCELA.PERDA_FATURAMENTO,
+        STATUS_PARCELA.POSSUI_PERDA,
     ].includes(s);
 
     const showEditDelete = isActionable && !parcela.hasPagamento;
@@ -969,9 +944,11 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
     }
 
     // ── 2. RENOVAR CONTRATO ──
-    if (s === "RENOVAR CONTRATO") {
-        const todayStr = new Date().toISOString().split("T")[0];
-        const isLiberado = todayStr >= (parcela.data_vencimento || "2099-01-01");
+    if (s === STATUS_PARCELA.RENOVAR_CONTRATO) {
+        const { allowed: isLiberado } = canNaoRenovar(
+            parcela.data_vencimento || "2099-01-01",
+            new Date().toISOString().split("T")[0]
+        );
         return (
             <div className="flex flex-row items-center justify-start gap-2 w-full flex-nowrap min-w-max">
                 <button onClick={() => setIsRenewOpen(true)} disabled={!isLiberado} title="Processar renovação" className="h-8 px-3 text-[10px] font-bold uppercase tracking-widest rounded-lg bg-[#34C759]/10 text-[#34C759] border border-[#34C759]/20 hover:bg-[#34C759]/20 transition-all shrink-0">Renovar</button>
@@ -988,7 +965,7 @@ export default function ParcelaActions({ parcela }: ParcelaActionsProps) {
         return (
             <div className="flex flex-row gap-2.5 w-full flex-nowrap">
                 {/* Baixa — ALWAYS GREEN */}
-                <button onClick={() => { if (s === "EM_INADIMPLENCIA" || s === "EM_PERDA_FATURAMENTO") { setIsBlockOpen(true); } else { setIsPaymentOpen(true); } }} title="Dar Baixa" className={`h-8 px-3 flex items-center justify-center gap-1.5 rounded-lg bg-[#34C759]/10 border border-[#34C759]/30 text-[#34C759] hover:bg-[#34C759]/20 hover:scale-105 shadow-[0_0_12px_rgba(52,199,89,0.15)] transition-all shrink-0`}>
+                <button onClick={() => { if (!canDarBaixa(s, parcela.hasPagamento ?? false).allowed) { setIsBlockOpen(true); } else { setIsPaymentOpen(true); } }} title="Dar Baixa" className={`h-8 px-3 flex items-center justify-center gap-1.5 rounded-lg bg-[#34C759]/10 border border-[#34C759]/30 text-[#34C759] hover:bg-[#34C759]/20 hover:scale-105 shadow-[0_0_12px_rgba(52,199,89,0.15)] transition-all shrink-0`}>
                     <Check size={15} strokeWidth={3} />
                 </button>
 

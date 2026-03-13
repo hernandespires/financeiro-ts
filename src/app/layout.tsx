@@ -30,12 +30,12 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-black min-h-screen text-gray-200`}
       >
         {/* Floating Header */}
-        <div className="max-w-7xl mx-auto pt-6 px-4">
+        <div className="max-w-7xl mx-auto pt-5 px-6">
           <Header />
         </div>
 
         {/* Page Content */}
-        <main className="max-w-7xl mx-auto px-4 py-8">
+        <main className="max-w-7xl mx-auto px-6 pt-5 pb-10">
           {children}
         </main>
       </body>
